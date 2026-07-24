@@ -1,8 +1,14 @@
 # FraudFlux PostgreSQL history store
 
-The local PostgreSQL container is initialized with
-`001_feature_history.sql`. It contains the point-in-time history required by
-the customer feature calculator:
+The local PostgreSQL container is initialized with two ordered schema files:
+
+- `001_feature_history.sql` creates the point-in-time history used by the
+  customer feature calculator.
+- `002_operational_storage.sql` adds durable scoring decisions, alerts,
+  analyst reviews, model/ruleset versions, audit history, rejected-event
+  idempotency, and the Kafka outbox.
+
+The history schema contains:
 
 - `customer_profiles`
 - `transaction_history`
@@ -24,6 +30,23 @@ postgresql://fraudflux:fraudflux@localhost:5432/fraudflux
 These credentials are only for local development. Use secret-managed
 credentials outside the developer machine.
 
-The initialization script runs only when the Docker volume is first created.
-Later schema changes should use versioned migrations instead of editing an
-already-applied file.
+PostgreSQL initialization scripts run only when the Docker volume is first
+created. For an existing local volume, apply the new migration explicitly:
+
+```powershell
+Get-Content infra/postgres/002_operational_storage.sql |
+    docker compose exec -T postgres psql -U fraudflux -d fraudflux
+```
+
+Production environments should apply these versioned files with a migration
+runner and secret-managed credentials.
+
+Run the opt-in live migration test after PostgreSQL is healthy:
+
+```powershell
+$env:FRAUDFLUX_RUN_POSTGRES_INTEGRATION = "1"
+python -m unittest tests.integration.test_postgres_storage_integration -v
+```
+
+Ordinary unit tests use database fakes and remain available without Docker or
+Psycopg.

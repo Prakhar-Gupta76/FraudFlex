@@ -124,6 +124,7 @@ class FraudScoringWorker:
                 input_event_id=event.event_id,
                 transaction_id=event.transaction.transaction_id,
                 customer_id=event.transaction.customer_id,
+                transaction_payload=event.model_dump(mode="json"),
                 feature_values=features.values,
                 rules=rules,
                 anomaly=anomaly,

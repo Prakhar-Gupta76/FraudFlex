@@ -72,7 +72,7 @@ Rules Engine          Anomaly Model
 | Isolation Forest anomaly model | Implemented |
 | Risk-score combiner | Implemented |
 | Decision and explanation engine | Implemented |
-| PostgreSQL persistence | Planned |
+| PostgreSQL persistence | Implemented |
 | FastAPI service | Planned |
 | Analyst dashboard | Planned |
 | Evaluation and monitoring | Planned |
@@ -293,10 +293,9 @@ delivery. Downstream consumers must therefore deduplicate deterministic output
 event IDs. Kafka transactions may be evaluated later if end-to-end
 consume-transform-produce atomicity becomes necessary.
 
-The included in-memory store proves orchestration and idempotency but is not
-durable across process restarts. Component 11 will implement the same atomic
-store contract with PostgreSQL. Components 6 through 10 will provide the real
-history, feature, rules, anomaly, and decision implementations.
+The in-memory store remains useful for isolated tests. The durable
+`PostgresProcessingStore` implements the same worker contract for real
+processing, including atomic decision, alert, audit, and outbox writes.
 
 ### 4.6 Customer Feature Calculator
 
@@ -606,6 +605,35 @@ PostgreSQL stores:
 - Audit history
 
 Unique constraints prevent duplicate transaction decisions.
+
+The implemented `fraudflux_storage` package provides:
+
+- `PostgresProcessingStore` for durable worker decisions, rejected events,
+  Kafka outbox records, and publish acknowledgements
+- `PostgresCustomerProfileRepository` for customer profile and normal
+  behaviour maintenance
+- `PostgresAlertRepository` for alert assignment, analyst outcomes, and notes
+- `PostgresVersionRepository` for immutable model and ruleset version records
+- A lazily loaded Psycopg connection factory, so unit tests do not require a
+  running database
+
+Each worker mutation uses one PostgreSQL transaction. A successful decision
+stores the validated transaction, processing status, complete scoring inputs,
+explanation, relevant alert, audit entry, and pending output events together.
+Kafka offsets are committed only after those outbox events are published. If
+publication is interrupted, redelivery reads the existing decision and resumes
+the pending outbox instead of calculating or alerting twice.
+
+Database constraints make idempotency authoritative across worker processes:
+
+- `input_event_id` and `transaction_id` are unique in `risk_decisions`
+- Each decision can create at most one fraud alert
+- Each alert can have at most one final analyst review
+- Each record/topic pair can create at most one outbox event
+
+The operational schema is versioned in
+`infra/postgres/002_operational_storage.sql`, after the feature-history schema
+in `001_feature_history.sql`.
 
 ### 4.12 Scored and Alert Events
 

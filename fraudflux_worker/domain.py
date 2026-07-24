@@ -214,6 +214,7 @@ class StoredDecision:
     input_event_id: str
     transaction_id: str
     customer_id: str
+    transaction_payload: Mapping[str, Any]
     feature_values: Mapping[str, Any]
     rules: RuleEvaluation
     anomaly: AnomalyEvaluation
