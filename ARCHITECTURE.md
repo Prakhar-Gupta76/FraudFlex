@@ -64,7 +64,8 @@ Rules Engine          Anomaly Model
 | --- | --- |
 | Transaction simulator | Implemented first |
 | Transaction validation | Implemented |
-| Kafka producer and topics | Planned |
+| Kafka producer | Implemented |
+| Kafka broker and topics | Planned |
 | Fraud-scoring worker | Planned |
 | Feature calculator | Planned |
 | Rules engine | Planned |
@@ -169,6 +170,29 @@ The producer is responsible for:
 - Event timestamps and schema versions
 - Safe retries for temporary publishing failures
 - Clear reporting of permanent failures
+
+The implemented `fraudflux_kafka` package provides:
+
+- An event factory that adds missing event IDs, transaction IDs, timestamps,
+  event type, and schema version
+- Validation through the shared Component 2 transaction contract
+- Deterministic UTF-8 JSON serialization
+- Customer ID message keys and traceable Kafka headers
+- Delivery receipts containing topic, partition, and offset
+- Bounded retries when the local producer queue is temporarily full
+- Idempotent Kafka configuration with `acks=all`
+- Delivery-timeout-controlled broker retries
+- Explicit enqueue, delivery, and timeout errors
+- A client protocol that permits unit testing without a running broker
+
+The wrapper does not manually resend a message after an uncertain delivery
+timeout, because doing so could create a duplicate. Librdkafka performs safe
+broker retries within the configured delivery timeout while idempotence is
+enabled. A final timeout is reported to the caller as an unknown delivery
+state.
+
+The production adapter uses `confluent-kafka`. Component 4 will provide the
+local Kafka broker and integration tests.
 
 ### 4.4 Kafka Event Broker
 
