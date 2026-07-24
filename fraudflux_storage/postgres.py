@@ -466,6 +466,84 @@ class PostgresAlertRepository:
         return True
 
 
+class PostgresQueryRepository:
+    """Read models used by the FastAPI service and analyst dashboard."""
+
+    def __init__(self, connection_factory: Callable[[], Connection]) -> None:
+        self.connection_factory = connection_factory
+
+    def list_transactions(
+        self,
+        *,
+        limit: int,
+        offset: int,
+        category: Optional[str] = None,
+    ) -> Sequence[Mapping[str, Any]]:
+        return self._fetch_all(
+            _LIST_TRANSACTIONS,
+            {"limit": limit, "offset": offset, "category": category},
+        )
+
+    def get_transaction(
+        self,
+        transaction_id: str,
+    ) -> Optional[Mapping[str, Any]]:
+        return self._fetch_one(
+            _GET_TRANSACTION_DETAIL,
+            {"transaction_id": transaction_id},
+        )
+
+    def list_alerts(
+        self,
+        *,
+        limit: int,
+        offset: int,
+        status: Optional[str] = None,
+    ) -> Sequence[Mapping[str, Any]]:
+        return self._fetch_all(
+            _LIST_ALERTS,
+            {"limit": limit, "offset": offset, "status": status},
+        )
+
+    def get_alert(
+        self,
+        alert_id: str,
+    ) -> Optional[Mapping[str, Any]]:
+        return self._fetch_one(
+            _GET_ALERT_DETAIL,
+            {"alert_id": alert_id},
+        )
+
+    def dashboard_summary(self) -> Mapping[str, Any]:
+        return self._fetch_one(_DASHBOARD_SUMMARY, {}) or {}
+
+    def health(self) -> bool:
+        row = self._fetch_one("SELECT 1 AS healthy", {})
+        return bool(row and row["healthy"] == 1)
+
+    def _fetch_one(
+        self,
+        query: str,
+        parameters: Mapping[str, Any],
+    ) -> Optional[Mapping[str, Any]]:
+        with self.connection_factory() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(query, parameters)
+                row = cursor.fetchone()
+        return _normalize_query_row(row) if row else None
+
+    def _fetch_all(
+        self,
+        query: str,
+        parameters: Mapping[str, Any],
+    ) -> Sequence[Mapping[str, Any]]:
+        with self.connection_factory() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(query, parameters)
+                rows = cursor.fetchall()
+        return tuple(_normalize_query_row(row) for row in rows)
+
+
 def _decision_parameters(decision: StoredDecision) -> Mapping[str, Any]:
     return {
         "record_id": decision.record_id,
@@ -670,6 +748,21 @@ def _json_value(value: Any) -> Any:
     return json.loads(value) if isinstance(value, str) else value
 
 
+def _normalize_query_row(row: Mapping[str, Any]) -> Mapping[str, Any]:
+    return {
+        key: _json_value(value)
+        if key
+        in {
+            "explanation",
+            "rule_hits",
+            "anomaly_deviations",
+            "feature_values",
+        }
+        else value
+        for key, value in row.items()
+    }
+
+
 def _optional_action(
     action: Optional[RecommendedAction],
 ) -> Optional[str]:
@@ -870,4 +963,84 @@ UPDATE fraud_alerts
 SET status = 'resolved', updated_at = CURRENT_TIMESTAMP
 WHERE alert_id = %(alert_id)s
 RETURNING alert_id
+"""
+
+_LIST_TRANSACTIONS = """
+SELECT th.transaction_id, th.customer_id, th.amount_minor, th.currency,
+       th.merchant_id, th.transaction_time, th.processing_status,
+       rd.final_score, rd.effective_category AS category,
+       rd.recommended_action, rd.processed_at
+FROM transaction_history AS th
+JOIN risk_decisions AS rd ON rd.transaction_id = th.transaction_id
+WHERE (%(category)s IS NULL OR rd.effective_category = %(category)s)
+ORDER BY th.transaction_time DESC, th.transaction_id
+LIMIT %(limit)s OFFSET %(offset)s
+"""
+
+_GET_TRANSACTION_DETAIL = """
+SELECT th.transaction_id, th.event_id, th.customer_id, th.account_id,
+       th.amount_minor, th.currency, th.merchant_id, th.merchant_category,
+       th.device_id, th.region, th.country, th.transaction_time,
+       th.processing_status, rd.final_score,
+       rd.score_category, rd.effective_category AS category,
+       rd.recommended_action, rd.override_applied, rd.explanation,
+       rd.rules_contribution, rd.rule_hits,
+       rd.anomaly_contribution, rd.anomaly_level, rd.anomaly_deviations,
+       rd.ruleset_version, rd.model_version, rd.score_policy_version,
+       rd.decision_policy_version, rd.processing_latency_ms, rd.processed_at
+FROM transaction_history AS th
+JOIN risk_decisions AS rd ON rd.transaction_id = th.transaction_id
+WHERE th.transaction_id = %(transaction_id)s
+"""
+
+_LIST_ALERTS = """
+SELECT fa.alert_id, fa.transaction_id, fa.customer_id, fa.status,
+       fa.assigned_to, fa.created_at, fa.updated_at,
+       rd.final_score, rd.effective_category AS category,
+       rd.recommended_action
+FROM fraud_alerts AS fa
+JOIN risk_decisions AS rd ON rd.record_id = fa.decision_record_id
+WHERE (%(status)s IS NULL OR fa.status = %(status)s)
+ORDER BY fa.created_at DESC, fa.alert_id
+LIMIT %(limit)s OFFSET %(offset)s
+"""
+
+_GET_ALERT_DETAIL = """
+SELECT fa.alert_id, fa.transaction_id, fa.customer_id, fa.status,
+       fa.assigned_to, fa.assigned_at, fa.created_at, fa.updated_at,
+       rd.final_score, rd.score_category,
+       rd.effective_category AS category, rd.recommended_action,
+       rd.override_applied, rd.explanation, rd.rules_contribution,
+       rd.rule_hits, rd.anomaly_contribution, rd.anomaly_level,
+       rd.anomaly_deviations, rd.ruleset_version, rd.model_version,
+       rd.score_policy_version, rd.decision_policy_version,
+       rd.processing_latency_ms, ar.review_id, ar.analyst_id,
+       ar.outcome AS review_outcome, ar.notes AS review_notes,
+       ar.reviewed_at
+FROM fraud_alerts AS fa
+JOIN risk_decisions AS rd ON rd.record_id = fa.decision_record_id
+LEFT JOIN analyst_reviews AS ar ON ar.alert_id = fa.alert_id
+WHERE fa.alert_id = %(alert_id)s
+"""
+
+_DASHBOARD_SUMMARY = """
+SELECT
+    COUNT(*) AS total_transactions,
+    COUNT(*) FILTER (WHERE effective_category = 'low') AS low_risk,
+    COUNT(*) FILTER (WHERE effective_category = 'medium') AS medium_risk,
+    COUNT(*) FILTER (WHERE effective_category = 'high') AS high_risk,
+    COALESCE(AVG(final_score), 0) AS average_risk_score,
+    COALESCE(
+        PERCENTILE_CONT(0.95) WITHIN GROUP (
+            ORDER BY processing_latency_ms
+        ),
+        0
+    ) AS p95_processing_latency_ms,
+    (SELECT COUNT(*) FROM fraud_alerts WHERE status = 'open')
+        AS open_alerts,
+    (SELECT COUNT(*) FROM fraud_alerts WHERE status = 'assigned')
+        AS assigned_alerts,
+    (SELECT COUNT(*) FROM fraud_alerts WHERE status = 'resolved')
+        AS resolved_alerts
+FROM risk_decisions
 """

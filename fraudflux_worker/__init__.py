@@ -21,6 +21,12 @@ from .kafka import (
     create_confluent_consumer,
 )
 from .outputs import DecisionOutputFactory
+from .scoring import (
+    DecisionProcessor,
+    ProcessedDecision,
+    ScoringResult,
+    SharedScoringPipeline,
+)
 from .store import InMemoryProcessingStore
 from .worker import FraudScoringWorker, KafkaConsumptionError
 
@@ -29,6 +35,7 @@ __all__ = [
     "CombinedRiskScore",
     "CustomerHistory",
     "DecisionOutputFactory",
+    "DecisionProcessor",
     "FeatureSet",
     "FraudScoringWorker",
     "InMemoryProcessingStore",
@@ -38,11 +45,14 @@ __all__ = [
     "OutputPublishReceipt",
     "OutboxMessage",
     "ProcessingOutcome",
+    "ProcessedDecision",
     "RecommendedAction",
     "RiskCategory",
     "RiskDecision",
     "RuleEvaluation",
     "RuleHit",
+    "ScoringResult",
+    "SharedScoringPipeline",
     "StoredDecision",
     "create_confluent_consumer",
 ]

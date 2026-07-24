@@ -11,6 +11,7 @@ from fraudflux_storage import (
     PostgresAlertRepository,
     PostgresCustomerProfileRepository,
     PostgresProcessingStore,
+    PostgresQueryRepository,
     PostgresVersionRepository,
     ReviewOutcome,
 )
@@ -415,6 +416,47 @@ class PostgresOperationalRepositoryTests(unittest.TestCase):
                 metadata={},
                 actor="release-pipeline",
             )
+
+    def test_query_repository_applies_filters_and_decodes_json(self) -> None:
+        transaction = {
+            "transaction_id": "TXN-1",
+            "explanation": '["Observed fact."]',
+            "rule_hits": '[{"rule_id":"R-1"}]',
+        }
+        cursor = FakeCursor(
+            {
+                "FROM transaction_history AS th": [[transaction]],
+                "FROM fraud_alerts AS fa": [[]],
+                "FROM risk_decisions": [
+                    {"total_transactions": 1, "low_risk": 1}
+                ],
+                "SELECT 1 AS healthy": [{"healthy": 1}],
+            }
+        )
+        repository = PostgresQueryRepository(
+            lambda: FakeConnection(cursor)
+        )
+
+        transactions = repository.list_transactions(
+            limit=25,
+            offset=5,
+            category="high",
+        )
+        alerts = repository.list_alerts(
+            limit=10,
+            offset=0,
+            status="open",
+        )
+        summary = repository.dashboard_summary()
+
+        self.assertEqual(transactions[0]["explanation"], ["Observed fact."])
+        self.assertEqual(transactions[0]["rule_hits"], [{"rule_id": "R-1"}])
+        self.assertEqual(alerts, ())
+        self.assertEqual(summary["total_transactions"], 1)
+        self.assertTrue(repository.health())
+        list_parameters = cursor.executions[0][1]
+        self.assertEqual(list_parameters["category"], "high")
+        self.assertEqual(list_parameters["limit"], 25)
 
 
 class PostgresMigrationTests(unittest.TestCase):

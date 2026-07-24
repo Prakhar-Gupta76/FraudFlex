@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import time
 from datetime import datetime, timezone
 from threading import Event
 from typing import Callable, Optional
@@ -14,15 +13,7 @@ from fraudflux_validation import (
     validate_transaction_event,
 )
 
-from .domain import (
-    CombinedRiskScore,
-    OutboxMessage,
-    ProcessingOutcome,
-    RecommendedAction,
-    RiskCategory,
-    RiskDecision,
-    StoredDecision,
-)
+from .domain import OutboxMessage, ProcessingOutcome
 from .outputs import DecisionOutputFactory
 from .ports import (
     AnomalyModel,
@@ -36,6 +27,7 @@ from .ports import (
     RiskCombiner,
     RulesEngine,
 )
+from .scoring import DecisionProcessor, SharedScoringPipeline
 
 
 class KafkaConsumptionError(RuntimeError):
@@ -58,7 +50,7 @@ class FraudScoringWorker:
         output_factory: Optional[DecisionOutputFactory] = None,
         consumer_group: str = "fraudflux-scoring-worker",
         clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
-        timer_ns: Callable[[], int] = time.perf_counter_ns,
+        timer_ns: Optional[Callable[[], int]] = None,
     ) -> None:
         self.consumer = consumer
         self.history_provider = history_provider
@@ -72,7 +64,25 @@ class FraudScoringWorker:
         self.output_factory = output_factory or DecisionOutputFactory()
         self.consumer_group = consumer_group
         self.clock = clock
-        self.timer_ns = timer_ns
+        pipeline_arguments = {}
+        if timer_ns is not None:
+            pipeline_arguments["timer_ns"] = timer_ns
+        self.pipeline = SharedScoringPipeline(
+            history_provider=history_provider,
+            feature_calculator=feature_calculator,
+            rules_engine=rules_engine,
+            anomaly_model=anomaly_model,
+            risk_combiner=risk_combiner,
+            decision_engine=decision_engine,
+            **pipeline_arguments,
+        )
+        self.processor = DecisionProcessor(
+            pipeline=self.pipeline,
+            store=store,
+            publisher=publisher,
+            output_factory=self.output_factory,
+            clock=clock,
+        )
 
     def process_message(
         self,
@@ -80,65 +90,16 @@ class FraudScoringWorker:
     ) -> ProcessingOutcome:
         if message.error() is not None:
             raise KafkaConsumptionError(str(message.error()))
-        processing_started = self.timer_ns()
-
         try:
             event = validate_transaction_event(message.value())
         except TransactionValidationError as error:
             return self._reject_invalid(message, error)
 
-        record_id = f"event:{event.event_id}"
-        existing = self.store.get_decision(event.event_id)
-        created = False
-        if existing is None:
-            history = self.history_provider.load(event)
-            features = self.feature_calculator.calculate(event, history)
-            rules = self.rules_engine.evaluate(event, history, features)
-            anomaly = self.anomaly_model.evaluate(features)
-            combined_score = self.risk_combiner.combine(rules, anomaly)
-            upstream_latency_ms = max(
-                0.0,
-                (self.timer_ns() - processing_started) / 1_000_000,
-            )
-            decision = self.decision_engine.decide(
-                combined_score,
-                rules,
-                anomaly,
-                upstream_processing_latency_ms=upstream_latency_ms,
-            )
-            _validate_decision(combined_score, decision)
-            processed_at = self.clock()
-            if processed_at.tzinfo is None:
-                raise ValueError("worker clock must return a timezone-aware time")
-
-            outputs = self.output_factory.build(
-                event,
-                rules,
-                anomaly,
-                combined_score,
-                decision,
-                processed_at=processed_at,
-            )
-            stored = StoredDecision(
-                record_id=record_id,
-                input_event_id=event.event_id,
-                transaction_id=event.transaction.transaction_id,
-                customer_id=event.transaction.customer_id,
-                transaction_payload=event.model_dump(mode="json"),
-                feature_values=features.values,
-                rules=rules,
-                anomaly=anomaly,
-                combined_score=combined_score,
-                decision=decision,
-                processed_at=processed_at.isoformat(),
-            )
-            created = self.store.save_decision_if_absent(stored, outputs)
-
-        self._publish_pending(record_id)
+        processed = self.processor.process(event)
         self._commit(message)
         return (
             ProcessingOutcome.PROCESSED
-            if created
+            if processed.created
             else ProcessingOutcome.DUPLICATE
         )
 
@@ -199,51 +160,7 @@ class FraudScoringWorker:
         )
 
     def _publish_pending(self, record_id: str) -> None:
-        for output in self.store.pending_outbox(record_id):
-            self.publisher.publish(output)
-            self.store.mark_outbox_published(output.outbox_id)
+        self.processor.publish_pending(record_id)
 
     def _commit(self, message: ConsumedMessage) -> None:
         self.consumer.commit(message=message, asynchronous=False)
-
-
-def _validate_decision(
-    combined_score: CombinedRiskScore,
-    decision: RiskDecision,
-) -> None:
-    if decision.final_score != combined_score.final_score:
-        raise ValueError(
-            "decision final score does not match the combined risk score"
-        )
-    required = combined_score.override_action
-    severity = {
-        None: 0,
-        RecommendedAction.APPROVE: 0,
-        RecommendedAction.VERIFY: 1,
-        RecommendedAction.HOLD: 2,
-    }
-    if severity[decision.action] < severity[required]:
-        raise ValueError("decision did not honor the risk-score override")
-    category_severity = {
-        RiskCategory.LOW: 0,
-        RiskCategory.MEDIUM: 1,
-        RiskCategory.HIGH: 2,
-    }
-    override_category = {
-        None: RiskCategory.LOW,
-        RecommendedAction.VERIFY: RiskCategory.MEDIUM,
-        RecommendedAction.HOLD: RiskCategory.HIGH,
-    }[required]
-    expected_category = max(
-        (decision.score_category, override_category),
-        key=category_severity.__getitem__,
-    )
-    if decision.category != expected_category:
-        raise ValueError(
-            "decision category is not justified by score or override"
-        )
-    expected_override_applied = (
-        expected_category != decision.score_category
-    )
-    if decision.override_applied != expected_override_applied:
-        raise ValueError("decision override status is inconsistent")

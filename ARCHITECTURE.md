@@ -74,7 +74,7 @@ Rules Engine          Anomaly Model
 | Decision and explanation engine | Implemented |
 | PostgreSQL persistence | Implemented |
 | Scored and alert event contracts and publisher | Implemented |
-| FastAPI service | Planned |
+| FastAPI service | Implemented |
 | Analyst dashboard | Planned |
 | Evaluation and monitoring | Planned |
 
@@ -703,6 +703,27 @@ POST /alerts/{alert_id}/review
 GET  /dashboard/summary
 GET  /health
 ```
+
+The implemented `fraudflux_api` package provides strict request/response
+contracts, generated OpenAPI documentation, bounded pagination, category and
+status filters, consistent `404`/`409`/`422` responses, and a database-aware
+health response.
+
+`SharedScoringPipeline` is the single scoring path for both Kafka and HTTP.
+`DecisionProcessor` surrounds it with idempotency, PostgreSQL persistence, the
+transactional outbox, and confirmed Kafka publication. Consequently,
+`POST /transactions/score` does not maintain a second copy of feature, rule,
+model, combination, or explanation logic. Retrying the same event returns its
+existing decision with `created: false`.
+
+The PostgreSQL query repository supplies read models for transaction lists and
+details, alert queues and explanations, aggregate dashboard counts, average
+risk score, p95 processing latency, and database health. Pagination is limited
+to 200 rows per request.
+
+The runtime requires a trained anomaly artifact and accepts PostgreSQL and
+Kafka connection settings through environment variables. Startup and OpenAPI
+instructions are documented in `fraudflux_api/README.md`.
 
 ### 4.14 Analyst Dashboard
 
