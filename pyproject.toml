@@ -3,15 +3,16 @@ requires = ["setuptools>=61"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "fraudflux-simulator"
-version = "0.1.0"
-description = "Deterministic synthetic payment transaction simulator for FraudFlux"
+name = "fraudflux"
+version = "0.2.0"
+description = "Real-time payment fraud detection system"
 requires-python = ">=3.10"
-dependencies = []
+dependencies = [
+    "pydantic>=2.8,<3",
+]
 
 [project.scripts]
 fraudflux-simulate = "fraudflux_simulator.cli:main"
 
 [tool.setuptools.packages.find]
-include = ["fraudflux_simulator*"]
-
+include = ["fraudflux_simulator*", "fraudflux_validation*"]

@@ -63,7 +63,7 @@ Rules Engine          Anomaly Model
 | Component | MVP status |
 | --- | --- |
 | Transaction simulator | Implemented first |
-| Transaction validation | Planned |
+| Transaction validation | Implemented |
 | Kafka producer and topics | Planned |
 | Fraud-scoring worker | Planned |
 | Feature calculator | Planned |
@@ -137,6 +137,24 @@ Validation checks the transaction contract before scoring:
 API requests with invalid data are rejected. Invalid Kafka events are recorded
 and published to `transactions.dead-letter` so one malformed event cannot stop
 the consumer.
+
+The implemented `fraudflux_validation` package provides:
+
+- Strict Pydantic contracts for the event and every nested transaction object
+- One reusable `validate_transaction_event` entry point
+- Structured, input-safe error details suitable for an HTTP `422` response
+- A dead-letter event builder for future Kafka consumer integration
+- Rejection of unknown fields, including accidental simulator ground truth
+- Timezone-aware timestamps and bounded geographic coordinates
+
+The validator supports schema version `1.0`, currencies `INR`, `USD`, `EUR`,
+`GBP`, and `SGD`, and the documented payment, device, and authentication
+enumerations. The future API and Kafka consumer must call this shared validator
+instead of defining their own versions of the transaction contract.
+
+Kafka publication is not part of this component. When the Kafka consumer is
+implemented, it will publish the dead-letter record produced here to
+`transactions.dead-letter`.
 
 ### 4.3 Kafka Producer
 
@@ -505,4 +523,3 @@ After the first MVP is stable, the architecture may add:
 - Multi-broker Kafka
 - Authentication and role-based access control
 - Kubernetes only when deployment scale justifies it
-
