@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any, Mapping, Optional, Protocol, Sequence
 
-from fastapi import FastAPI, HTTPException, Query, status
+from fastapi import FastAPI, HTTPException, Query, Request, status
+from fastapi.concurrency import run_in_threadpool
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 
 from fraudflux_storage import ReviewOutcome
 from fraudflux_validation import TransactionEvent
@@ -30,6 +34,8 @@ class QueryRepository(Protocol):
         limit: int,
         offset: int,
         category: Optional[str] = None,
+        search: Optional[str] = None,
+        customer_id: Optional[str] = None,
     ) -> Sequence[Mapping[str, Any]]: ...
 
     def get_transaction(
@@ -72,14 +78,28 @@ def create_app(
     processor: DecisionProcessor,
     queries: QueryRepository,
     alerts: AlertReviewRepository,
+    cors_origins: Sequence[str] = (
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+    ),
+    live_interval_seconds: float = 2.0,
 ) -> FastAPI:
+    if live_interval_seconds <= 0:
+        raise ValueError("live_interval_seconds must be positive")
     app = FastAPI(
         title="FraudFlux Risk API",
-        version="0.13.0",
+        version="0.14.0",
         description=(
             "Synchronous scoring and analyst-query API for simulated "
             "FraudFlux transactions."
         ),
+    )
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=list(cors_origins),
+        allow_credentials=True,
+        allow_methods=["GET", "POST"],
+        allow_headers=["Content-Type"],
     )
 
     @app.post(
@@ -107,11 +127,15 @@ def create_app(
         limit: int = Query(default=50, ge=1, le=200),
         offset: int = Query(default=0, ge=0),
         category: Optional[str] = Query(default=None, pattern="^(low|medium|high)$"),
+        search: Optional[str] = Query(default=None, max_length=120),
+        customer_id: Optional[str] = Query(default=None, max_length=64),
     ) -> Sequence[Mapping[str, Any]]:
         return queries.list_transactions(
             limit=limit,
             offset=offset,
             category=category,
+            search=search.strip() if search and search.strip() else None,
+            customer_id=customer_id,
         )
 
     @app.get(
@@ -204,6 +228,34 @@ def create_app(
     def dashboard_summary() -> Mapping[str, Any]:
         return queries.dashboard_summary()
 
+    @app.get("/events/stream", tags=["operations"])
+    async def event_stream(request: Request) -> StreamingResponse:
+        async def events():
+            while not await request.is_disconnected():
+                try:
+                    summary = await run_in_threadpool(
+                        queries.dashboard_summary
+                    )
+                    payload = DashboardSummary.model_validate(
+                        summary
+                    ).model_dump_json()
+                    yield f"event: dashboard\ndata: {payload}\n\n"
+                except Exception:
+                    yield (
+                        "event: service.degraded\n"
+                        'data: {"status":"degraded"}\n\n'
+                    )
+                await asyncio.sleep(live_interval_seconds)
+
+        return StreamingResponse(
+            events(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "X-Accel-Buffering": "no",
+            },
+        )
+
     @app.get(
         "/health",
         response_model=HealthResponse,
@@ -218,7 +270,7 @@ def create_app(
         return HealthResponse(
             status="healthy" if database_healthy else "degraded",
             service="fraudflux-api",
-            version="0.13.0",
+            version="0.14.0",
             checks={"database": state},
         )
 

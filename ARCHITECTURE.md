@@ -75,7 +75,7 @@ Rules Engine          Anomaly Model
 | PostgreSQL persistence | Implemented |
 | Scored and alert event contracts and publisher | Implemented |
 | FastAPI service | Implemented |
-| Analyst dashboard | Planned |
+| Analyst dashboard | Implemented |
 | Evaluation and monitoring | Planned |
 
 ## 4. Component Flow
@@ -740,6 +740,28 @@ The React and TypeScript dashboard provides:
 - Analyst review forms
 
 Server-Sent Events or WebSockets will deliver live updates.
+
+The implemented `dashboard` application uses React, TypeScript, and Vite. Its
+operations workspace includes:
+
+- Live summary cards for total transactions, approvals, verification,
+  temporary holds, and open alerts
+- Risk-distribution and median/p95 latency visualizations
+- A server-side searchable and risk-filtered transaction table
+- An open/assigned/resolved alert queue
+- Slide-over transaction and alert investigations
+- Customer transaction history and factual decision explanations
+- Rule-point, anomaly-deviation, model, and ruleset evidence
+- Final analyst-review forms connected to the audited review endpoint
+- Responsive desktop, tablet, and mobile layouts
+
+The FastAPI `/events/stream` endpoint emits dashboard snapshots using
+Server-Sent Events. The browser refreshes transaction and alert read models on
+each event and visibly reports live or reconnecting state. CORS origins are
+explicitly configurable; list queries remain capped at 200 rows.
+
+Local development and production-build commands are documented in
+`dashboard/README.md`.
 
 ### 4.15 Analyst Review
 

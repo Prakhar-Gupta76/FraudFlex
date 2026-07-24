@@ -106,8 +106,16 @@ class FakeQueries:
         limit: int,
         offset: int,
         category: Optional[str] = None,
+        search: Optional[str] = None,
+        customer_id: Optional[str] = None,
     ) -> list[dict[str, Any]]:
-        self.transaction_filters = (limit, offset, category)
+        self.transaction_filters = (
+            limit,
+            offset,
+            category,
+            search,
+            customer_id,
+        )
         return [transaction_summary()]
 
     def get_transaction(self, transaction_id: str) -> Any:
@@ -133,6 +141,7 @@ class FakeQueries:
             "medium_risk": 2,
             "high_risk": 1,
             "average_risk_score": 24.5,
+            "median_processing_latency_ms": 3.1,
             "p95_processing_latency_ms": 8.2,
             "open_alerts": 2,
             "assigned_alerts": 1,
@@ -198,6 +207,7 @@ class FastApiServiceTests(unittest.TestCase):
             ("GET", "/alerts/{alert_id}"),
             ("POST", "/alerts/{alert_id}/review"),
             ("GET", "/dashboard/summary"),
+            ("GET", "/events/stream"),
             ("GET", "/health"),
         ):
             self.assertIn(expected, routes)
@@ -229,12 +239,16 @@ class FastApiServiceTests(unittest.TestCase):
     def test_transaction_queries_filter_and_report_not_found(self) -> None:
         listed = self.client.get(
             "/transactions?limit=25&offset=5&category=high"
+            "&search=CUS&customer_id=CUS-1"
         )
         found = self.client.get("/transactions/TXN-1")
         missing = self.client.get("/transactions/unknown")
 
         self.assertEqual(listed.status_code, 200)
-        self.assertEqual(self.queries.transaction_filters, (25, 5, "high"))
+        self.assertEqual(
+            self.queries.transaction_filters,
+            (25, 5, "high", "CUS", "CUS-1"),
+        )
         self.assertEqual(found.json()["transaction_id"], "TXN-1")
         self.assertEqual(missing.status_code, 404)
 
@@ -273,6 +287,10 @@ class FastApiServiceTests(unittest.TestCase):
         degraded = self.client.get("/health")
 
         self.assertEqual(summary.json()["total_transactions"], 10)
+        self.assertEqual(
+            summary.json()["median_processing_latency_ms"],
+            3.1,
+        )
         self.assertEqual(healthy.json()["status"], "healthy")
         self.assertEqual(degraded.json()["status"], "degraded")
         self.assertEqual(
@@ -288,6 +306,21 @@ class FastApiServiceTests(unittest.TestCase):
         self.assertEqual(
             self.client.get("/alerts?status=invalid").status_code,
             422,
+        )
+
+    def test_local_dashboard_origin_is_allowed_by_cors(self) -> None:
+        response = self.client.options(
+            "/dashboard/summary",
+            headers={
+                "Origin": "http://localhost:5173",
+                "Access-Control-Request-Method": "GET",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.headers["access-control-allow-origin"],
+            "http://localhost:5173",
         )
 
 

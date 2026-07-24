@@ -457,6 +457,7 @@ class PostgresOperationalRepositoryTests(unittest.TestCase):
         list_parameters = cursor.executions[0][1]
         self.assertEqual(list_parameters["category"], "high")
         self.assertEqual(list_parameters["limit"], 25)
+        self.assertIsNone(list_parameters["search"])
 
 
 class PostgresMigrationTests(unittest.TestCase):

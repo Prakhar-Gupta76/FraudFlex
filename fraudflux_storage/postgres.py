@@ -478,10 +478,18 @@ class PostgresQueryRepository:
         limit: int,
         offset: int,
         category: Optional[str] = None,
+        search: Optional[str] = None,
+        customer_id: Optional[str] = None,
     ) -> Sequence[Mapping[str, Any]]:
         return self._fetch_all(
             _LIST_TRANSACTIONS,
-            {"limit": limit, "offset": offset, "category": category},
+            {
+                "limit": limit,
+                "offset": offset,
+                "category": category,
+                "search": search,
+                "customer_id": customer_id,
+            },
         )
 
     def get_transaction(
@@ -973,6 +981,13 @@ SELECT th.transaction_id, th.customer_id, th.amount_minor, th.currency,
 FROM transaction_history AS th
 JOIN risk_decisions AS rd ON rd.transaction_id = th.transaction_id
 WHERE (%(category)s IS NULL OR rd.effective_category = %(category)s)
+  AND (%(customer_id)s IS NULL OR th.customer_id = %(customer_id)s)
+  AND (
+      %(search)s IS NULL
+      OR th.transaction_id ILIKE '%%' || %(search)s || '%%'
+      OR th.customer_id ILIKE '%%' || %(search)s || '%%'
+      OR th.merchant_id ILIKE '%%' || %(search)s || '%%'
+  )
 ORDER BY th.transaction_time DESC, th.transaction_id
 LIMIT %(limit)s OFFSET %(offset)s
 """
@@ -1030,6 +1045,12 @@ SELECT
     COUNT(*) FILTER (WHERE effective_category = 'medium') AS medium_risk,
     COUNT(*) FILTER (WHERE effective_category = 'high') AS high_risk,
     COALESCE(AVG(final_score), 0) AS average_risk_score,
+    COALESCE(
+        PERCENTILE_CONT(0.5) WITHIN GROUP (
+            ORDER BY processing_latency_ms
+        ),
+        0
+    ) AS median_processing_latency_ms,
     COALESCE(
         PERCENTILE_CONT(0.95) WITHIN GROUP (
             ORDER BY processing_latency_ms

@@ -149,6 +149,7 @@ class DashboardSummary(ApiModel):
     medium_risk: int = 0
     high_risk: int = 0
     average_risk_score: float = 0
+    median_processing_latency_ms: float = 0
     p95_processing_latency_ms: float = 0
     open_alerts: int = 0
     assigned_alerts: int = 0

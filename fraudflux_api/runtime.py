@@ -41,6 +41,14 @@ def create_runtime_app():
         "FRAUDFLUX_KAFKA_BOOTSTRAP_SERVERS",
         "localhost:9092",
     )
+    cors_origins = tuple(
+        origin.strip()
+        for origin in os.getenv(
+            "FRAUDFLUX_CORS_ORIGINS",
+            "http://localhost:5173,http://127.0.0.1:5173",
+        ).split(",")
+        if origin.strip()
+    )
     connection_factory = create_connection_factory(
         PostgresStorageSettings(dsn=dsn)
     )
@@ -66,4 +74,5 @@ def create_runtime_app():
         processor=processor,
         queries=PostgresQueryRepository(connection_factory),
         alerts=PostgresAlertRepository(connection_factory),
+        cors_origins=cors_origins,
     )
