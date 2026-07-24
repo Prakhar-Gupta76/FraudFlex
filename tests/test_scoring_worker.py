@@ -121,13 +121,20 @@ class Collaborators:
     def combine(self, rules: Any, anomaly: Any) -> CombinedRiskScore:
         self.calls.append("combine")
         score = rules.contribution + anomaly.contribution
+        requested_override = rules.override_action
+        if requested_override is None:
+            requested_override = {
+                RiskCategory.LOW: None,
+                RiskCategory.MEDIUM: RecommendedAction.VERIFY,
+                RiskCategory.HIGH: RecommendedAction.HOLD,
+            }[self.category]
         return CombinedRiskScore(
             rules_contribution=rules.contribution,
             anomaly_contribution=anomaly.contribution,
             uncapped_score=score,
             final_score=min(100, score),
             policy_version="test-score-policy",
-            override_action=rules.override_action,
+            override_action=requested_override,
         )
 
     def decide(
@@ -135,6 +142,8 @@ class Collaborators:
         score: CombinedRiskScore,
         rules: Any,
         anomaly: Any,
+        *,
+        upstream_processing_latency_ms: float = 0.0,
     ) -> RiskDecision:
         self.calls.append("decide")
         actions = {
@@ -147,6 +156,10 @@ class Collaborators:
             category=self.category,
             action=actions[self.category],
             explanation=("Amount is unusual",),
+            score_category=RiskCategory.LOW,
+            decision_policy_version="test-decision-policy",
+            processing_latency_ms=upstream_processing_latency_ms,
+            override_applied=self.category != RiskCategory.LOW,
         )
 
 
@@ -250,6 +263,12 @@ class FraudScoringWorkerTests(unittest.TestCase):
         self.assertEqual(0.0, risk["anomaly_inference_time_ms"])
         self.assertEqual(32, risk["uncapped_score"])
         self.assertEqual("test-score-policy", risk["score_policy_version"])
+        self.assertEqual("low", risk["score_category"])
+        self.assertEqual(
+            "test-decision-policy",
+            risk["decision_policy_version"],
+        )
+        self.assertGreaterEqual(risk["processing_latency_ms"], 0)
         self.assertEqual(1, len(consumer.commits))
         self.assertFalse(consumer.commits[0][1])
 
@@ -264,6 +283,13 @@ class FraudScoringWorkerTests(unittest.TestCase):
                     ["transactions.scored", "fraud.alerts"],
                     [message.topic for message in publisher.messages],
                 )
+                alert = publisher.messages[1].payload
+                self.assertIn("triggered_rules", alert)
+                self.assertIn("anomaly_deviations", alert)
+                self.assertIn("ruleset_version", alert)
+                self.assertIn("model_version", alert)
+                self.assertIn("decision_policy_version", alert)
+                self.assertIn("processing_latency_ms", alert)
 
     def test_redelivery_does_not_recalculate_or_republish(self) -> None:
         worker, collaborators, publisher, consumer, store = build_worker(
@@ -362,6 +388,8 @@ class FraudScoringWorkerTests(unittest.TestCase):
             score: CombinedRiskScore,
             rules: Any,
             anomaly: Any,
+            *,
+            upstream_processing_latency_ms: float = 0.0,
         ) -> RiskDecision:
             return RiskDecision(
                 final_score=score.final_score + 1,
@@ -402,6 +430,35 @@ class FraudScoringWorkerTests(unittest.TestCase):
         collaborators.evaluate_rules = overridden_rules  # type: ignore[method-assign]
 
         with self.assertRaisesRegex(ValueError, "did not honor"):
+            worker.process_message(FakeMessage(valid_event()))
+
+        self.assertEqual(0, len(consumer.commits))
+        self.assertEqual(0, store.decision_count)
+
+    def test_category_cannot_be_escalated_without_score_or_override(
+        self,
+    ) -> None:
+        worker, collaborators, _, consumer, store = build_worker()
+
+        def unjustified_decision(
+            score: CombinedRiskScore,
+            rules: Any,
+            anomaly: Any,
+            *,
+            upstream_processing_latency_ms: float = 0.0,
+        ) -> RiskDecision:
+            return RiskDecision(
+                final_score=score.final_score,
+                score_category=RiskCategory.LOW,
+                category=RiskCategory.HIGH,
+                action=RecommendedAction.HOLD,
+                explanation=("Unjustified escalation",),
+                override_applied=True,
+            )
+
+        collaborators.decide = unjustified_decision  # type: ignore[method-assign]
+
+        with self.assertRaisesRegex(ValueError, "not justified"):
             worker.process_message(FakeMessage(valid_event()))
 
         self.assertEqual(0, len(consumer.commits))

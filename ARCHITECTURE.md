@@ -71,7 +71,7 @@ Rules Engine          Anomaly Model
 | YAML rules engine | Implemented |
 | Isolation Forest anomaly model | Implemented |
 | Risk-score combiner | Implemented |
-| Decision and explanation engine | Planned |
+| Decision and explanation engine | Implemented |
 | PostgreSQL persistence | Planned |
 | FastAPI service | Planned |
 | Analyst dashboard | Planned |
@@ -552,6 +552,46 @@ Every result records:
 
 Explanations state observed facts and do not make unsupported claims about the
 customer.
+
+The implemented `fraudflux_decision.InitialDecisionEngine` applies the
+versioned `decision-policy-1.0.0` thresholds. It records both:
+
+- `score_category`: the category produced strictly by the numeric score
+- `category`: the effective category after a safe minimum-action override
+
+An additional-verification override can raise a low score to an effective
+medium category. A hold override can raise a low or medium score to an
+effective high category. An override can never lower the category required by
+the numeric score. This preserves the score's meaning while ensuring
+high-confidence controls still create actionable alerts.
+
+The decision contract validates that score and score category agree, the
+recommended action matches the effective category, and category elevation is
+explicitly marked as an override. The worker independently confirms that the
+decision preserves Component 9's final score and honors its minimum action.
+
+Explanations are deterministic statements about recorded evidence:
+
+- Numeric rules/anomaly breakdown
+- Score threshold and policy version
+- Matched rule IDs, points, and configured observed conditions
+- Anomaly level and model-observed deviations
+- Override effect, when present
+- Recommended simulated MVP action
+
+They do not label a customer or transaction as fraudulent, criminal, guilty,
+or stolen. The high category means the configured system requires temporary
+review, not that misconduct has been established.
+
+`processing_latency_ms` measures validation, history loading, feature
+calculation, rules, anomaly inference, score combination, and decision
+generation. It intentionally excludes asynchronous Kafka publication and
+database/outbox work, which will have separate operational metrics.
+
+Scored and alert events now carry the score and effective categories, action,
+override status, complete explanation, triggered rules, anomaly contribution
+and deviations, ruleset/model/score-policy/decision-policy versions, and
+processing latency.
 
 ### 4.11 PostgreSQL Storage
 

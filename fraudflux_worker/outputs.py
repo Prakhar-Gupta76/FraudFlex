@@ -34,6 +34,15 @@ class DecisionOutputFactory:
     ) -> List[OutboxMessage]:
         record_id = f"event:{event.event_id}"
         score_event_id = f"SCORED-{event.event_id}"
+        triggered_rules = [
+            {
+                "rule_id": hit.rule_id,
+                "points": hit.points,
+                "reason": hit.reason,
+            }
+            for hit in rules.hits
+        ]
+        anomaly_deviations = list(anomaly.deviations)
         score_payload = {
             "event_id": score_event_id,
             "event_type": "transaction.scored",
@@ -57,20 +66,19 @@ class DecisionOutputFactory:
                 "anomaly_level": anomaly.level,
                 "anomaly_inference_time_ms": anomaly.inference_time_ms,
                 "final_score": combined_score.final_score,
+                "score_category": decision.score_category.value,
                 "category": decision.category.value,
                 "recommended_action": decision.action.value,
+                "override_applied": decision.override_applied,
                 "explanation": list(decision.explanation),
-                "triggered_rules": [
-                    {
-                        "rule_id": hit.rule_id,
-                        "points": hit.points,
-                        "reason": hit.reason,
-                    }
-                    for hit in rules.hits
-                ],
-                "anomaly_deviations": list(anomaly.deviations),
+                "triggered_rules": triggered_rules,
+                "anomaly_deviations": anomaly_deviations,
                 "ruleset_version": rules.ruleset_version,
                 "model_version": anomaly.model_version,
+                "decision_policy_version": (
+                    decision.decision_policy_version
+                ),
+                "processing_latency_ms": decision.processing_latency_ms,
             },
         }
         outputs = [
@@ -101,9 +109,32 @@ class DecisionOutputFactory:
                         "transaction_id": event.transaction.transaction_id,
                         "customer_id": event.transaction.customer_id,
                         "risk_score": combined_score.final_score,
+                        "score_category": (
+                            decision.score_category.value
+                        ),
                         "risk_category": decision.category.value,
                         "recommended_action": decision.action.value,
+                        "override_applied": decision.override_applied,
                         "explanation": list(decision.explanation),
+                        "rules_contribution": (
+                            combined_score.rules_contribution
+                        ),
+                        "anomaly_contribution": (
+                            combined_score.anomaly_contribution
+                        ),
+                        "triggered_rules": triggered_rules,
+                        "anomaly_deviations": anomaly_deviations,
+                        "ruleset_version": rules.ruleset_version,
+                        "model_version": anomaly.model_version,
+                        "score_policy_version": (
+                            combined_score.policy_version
+                        ),
+                        "decision_policy_version": (
+                            decision.decision_policy_version
+                        ),
+                        "processing_latency_ms": (
+                            decision.processing_latency_ms
+                        ),
                     },
                 )
             )

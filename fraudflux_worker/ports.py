@@ -84,6 +84,8 @@ class DecisionEngine(Protocol):
         score: CombinedRiskScore,
         rules: RuleEvaluation,
         anomaly: AnomalyEvaluation,
+        *,
+        upstream_processing_latency_ms: float = 0.0,
     ) -> RiskDecision: ...
 
 

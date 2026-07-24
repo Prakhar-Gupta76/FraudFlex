@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from datetime import datetime, timezone
 from threading import Event
 from typing import Callable, Optional
@@ -18,6 +19,7 @@ from .domain import (
     OutboxMessage,
     ProcessingOutcome,
     RecommendedAction,
+    RiskCategory,
     RiskDecision,
     StoredDecision,
 )
@@ -56,6 +58,7 @@ class FraudScoringWorker:
         output_factory: Optional[DecisionOutputFactory] = None,
         consumer_group: str = "fraudflux-scoring-worker",
         clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
+        timer_ns: Callable[[], int] = time.perf_counter_ns,
     ) -> None:
         self.consumer = consumer
         self.history_provider = history_provider
@@ -69,6 +72,7 @@ class FraudScoringWorker:
         self.output_factory = output_factory or DecisionOutputFactory()
         self.consumer_group = consumer_group
         self.clock = clock
+        self.timer_ns = timer_ns
 
     def process_message(
         self,
@@ -76,6 +80,7 @@ class FraudScoringWorker:
     ) -> ProcessingOutcome:
         if message.error() is not None:
             raise KafkaConsumptionError(str(message.error()))
+        processing_started = self.timer_ns()
 
         try:
             event = validate_transaction_event(message.value())
@@ -91,10 +96,15 @@ class FraudScoringWorker:
             rules = self.rules_engine.evaluate(event, history, features)
             anomaly = self.anomaly_model.evaluate(features)
             combined_score = self.risk_combiner.combine(rules, anomaly)
+            upstream_latency_ms = max(
+                0.0,
+                (self.timer_ns() - processing_started) / 1_000_000,
+            )
             decision = self.decision_engine.decide(
                 combined_score,
                 rules,
                 anomaly,
+                upstream_processing_latency_ms=upstream_latency_ms,
             )
             _validate_decision(combined_score, decision)
             processed_at = self.clock()
@@ -213,3 +223,26 @@ def _validate_decision(
     }
     if severity[decision.action] < severity[required]:
         raise ValueError("decision did not honor the risk-score override")
+    category_severity = {
+        RiskCategory.LOW: 0,
+        RiskCategory.MEDIUM: 1,
+        RiskCategory.HIGH: 2,
+    }
+    override_category = {
+        None: RiskCategory.LOW,
+        RecommendedAction.VERIFY: RiskCategory.MEDIUM,
+        RecommendedAction.HOLD: RiskCategory.HIGH,
+    }[required]
+    expected_category = max(
+        (decision.score_category, override_category),
+        key=category_severity.__getitem__,
+    )
+    if decision.category != expected_category:
+        raise ValueError(
+            "decision category is not justified by score or override"
+        )
+    expected_override_applied = (
+        expected_category != decision.score_category
+    )
+    if decision.override_applied != expected_override_applied:
+        raise ValueError("decision override status is inconsistent")
