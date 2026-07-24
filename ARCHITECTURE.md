@@ -66,7 +66,7 @@ Rules Engine          Anomaly Model
 | Transaction validation | Implemented |
 | Kafka producer | Implemented |
 | Kafka broker and topics | Implemented |
-| Fraud-scoring worker | Planned |
+| Fraud-scoring worker | Implemented orchestration |
 | Feature calculator | Planned |
 | Rules engine | Planned |
 | Anomaly model | Planned |
@@ -261,6 +261,41 @@ The worker is the authoritative asynchronous transaction processor. It:
 
 The worker is idempotent: redelivery of an event must not create duplicate
 decisions or alerts.
+
+The implemented `fraudflux_worker` package provides:
+
+- A manually committed Kafka consumer configuration
+- Revalidation of every consumed event
+- Dead-letter handling for invalid records
+- Event-ID idempotency checks
+- Explicit ports for history, feature calculation, rules, anomaly detection,
+  risk combination, storage, and output publication
+- Atomic decision-plus-outbox storage semantics
+- Deterministic scored-event and alert identifiers
+- Publishing of pending outbox events before offset commit
+- Recovery of pending output publication after Kafka redelivery
+- Medium- and high-risk alert creation
+- A reusable processing loop with dependency injection
+
+The worker uses an outbox contract because saving a decision, publishing Kafka
+events, and committing a consumer offset are three separate operations. A
+decision and its output records are stored atomically. The worker publishes all
+pending output records and only then commits the input offset. If publication
+fails, the offset is not committed; redelivery finds the existing decision and
+continues its pending outbox instead of recalculating or creating a second
+logical decision.
+
+Output event IDs are derived from the input event ID. This provides logical
+deduplication across redelivery. A process crash after Kafka accepts an output
+but before the outbox is marked published can still cause physical at-least-once
+delivery. Downstream consumers must therefore deduplicate deterministic output
+event IDs. Kafka transactions may be evaluated later if end-to-end
+consume-transform-produce atomicity becomes necessary.
+
+The included in-memory store proves orchestration and idempotency but is not
+durable across process restarts. Component 11 will implement the same atomic
+store contract with PostgreSQL. Components 6 through 10 will provide the real
+history, feature, rules, anomaly, and decision implementations.
 
 ### 4.6 Customer Feature Calculator
 
