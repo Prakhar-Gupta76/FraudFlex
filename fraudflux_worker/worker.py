@@ -14,8 +14,11 @@ from fraudflux_validation import (
 )
 
 from .domain import (
+    CombinedRiskScore,
     OutboxMessage,
     ProcessingOutcome,
+    RecommendedAction,
+    RiskDecision,
     StoredDecision,
 )
 from .outputs import DecisionOutputFactory
@@ -23,6 +26,7 @@ from .ports import (
     AnomalyModel,
     ConsumedMessage,
     Consumer,
+    DecisionEngine,
     FeatureCalculator,
     HistoryProvider,
     OutputPublisher,
@@ -46,6 +50,7 @@ class FraudScoringWorker:
         rules_engine: RulesEngine,
         anomaly_model: AnomalyModel,
         risk_combiner: RiskCombiner,
+        decision_engine: DecisionEngine,
         store: ProcessingStore,
         publisher: OutputPublisher,
         output_factory: Optional[DecisionOutputFactory] = None,
@@ -58,6 +63,7 @@ class FraudScoringWorker:
         self.rules_engine = rules_engine
         self.anomaly_model = anomaly_model
         self.risk_combiner = risk_combiner
+        self.decision_engine = decision_engine
         self.store = store
         self.publisher = publisher
         self.output_factory = output_factory or DecisionOutputFactory()
@@ -84,7 +90,13 @@ class FraudScoringWorker:
             features = self.feature_calculator.calculate(event, history)
             rules = self.rules_engine.evaluate(event, history, features)
             anomaly = self.anomaly_model.evaluate(features)
-            decision = self.risk_combiner.combine(rules, anomaly)
+            combined_score = self.risk_combiner.combine(rules, anomaly)
+            decision = self.decision_engine.decide(
+                combined_score,
+                rules,
+                anomaly,
+            )
+            _validate_decision(combined_score, decision)
             processed_at = self.clock()
             if processed_at.tzinfo is None:
                 raise ValueError("worker clock must return a timezone-aware time")
@@ -93,6 +105,7 @@ class FraudScoringWorker:
                 event,
                 rules,
                 anomaly,
+                combined_score,
                 decision,
                 processed_at=processed_at,
             )
@@ -104,6 +117,7 @@ class FraudScoringWorker:
                 feature_values=features.values,
                 rules=rules,
                 anomaly=anomaly,
+                combined_score=combined_score,
                 decision=decision,
                 processed_at=processed_at.isoformat(),
             )
@@ -180,3 +194,22 @@ class FraudScoringWorker:
 
     def _commit(self, message: ConsumedMessage) -> None:
         self.consumer.commit(message=message, asynchronous=False)
+
+
+def _validate_decision(
+    combined_score: CombinedRiskScore,
+    decision: RiskDecision,
+) -> None:
+    if decision.final_score != combined_score.final_score:
+        raise ValueError(
+            "decision final score does not match the combined risk score"
+        )
+    required = combined_score.override_action
+    severity = {
+        None: 0,
+        RecommendedAction.APPROVE: 0,
+        RecommendedAction.VERIFY: 1,
+        RecommendedAction.HOLD: 2,
+    }
+    if severity[decision.action] < severity[required]:
+        raise ValueError("decision did not honor the risk-score override")

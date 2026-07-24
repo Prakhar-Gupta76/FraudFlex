@@ -2,6 +2,7 @@
 
 from .domain import (
     AnomalyEvaluation,
+    CombinedRiskScore,
     CustomerHistory,
     FeatureSet,
     OutboxMessage,
@@ -20,6 +21,7 @@ from .worker import FraudScoringWorker, KafkaConsumptionError
 
 __all__ = [
     "AnomalyEvaluation",
+    "CombinedRiskScore",
     "CustomerHistory",
     "DecisionOutputFactory",
     "FeatureSet",
@@ -37,4 +39,3 @@ __all__ = [
     "StoredDecision",
     "create_confluent_consumer",
 ]
-

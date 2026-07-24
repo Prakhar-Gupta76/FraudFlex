@@ -96,6 +96,50 @@ class AnomalyEvaluation:
 
 
 @dataclass(frozen=True)
+class CombinedRiskScore:
+    rules_contribution: int
+    anomaly_contribution: int
+    uncapped_score: int
+    final_score: int
+    policy_version: str
+    override_action: Optional[RecommendedAction] = None
+
+    def __post_init__(self) -> None:
+        integer_values = (
+            self.rules_contribution,
+            self.anomaly_contribution,
+            self.uncapped_score,
+            self.final_score,
+        )
+        if any(type(value) is not int for value in integer_values):
+            raise ValueError("combined risk score values must be integers")
+        if not 0 <= self.rules_contribution <= 70:
+            raise ValueError("combined rules contribution must be 0 to 70")
+        if not 0 <= self.anomaly_contribution <= 30:
+            raise ValueError("combined anomaly contribution must be 0 to 30")
+        expected_uncapped = (
+            self.rules_contribution + self.anomaly_contribution
+        )
+        if self.uncapped_score != expected_uncapped:
+            raise ValueError(
+                "uncapped score must equal rules plus anomaly contributions"
+            )
+        if self.final_score != min(100, self.uncapped_score):
+            raise ValueError("final score must apply the 100-point cap")
+        if not self.policy_version.strip():
+            raise ValueError("score policy version cannot be blank")
+        if self.override_action == RecommendedAction.APPROVE:
+            raise ValueError("a risk override cannot force approval")
+
+    @property
+    def requires_review(self) -> bool:
+        return self.override_action in {
+            RecommendedAction.VERIFY,
+            RecommendedAction.HOLD,
+        }
+
+
+@dataclass(frozen=True)
 class RiskDecision:
     final_score: int
     category: RiskCategory
@@ -118,6 +162,7 @@ class StoredDecision:
     feature_values: Mapping[str, Any]
     rules: RuleEvaluation
     anomaly: AnomalyEvaluation
+    combined_score: CombinedRiskScore
     decision: RiskDecision
     processed_at: str
 

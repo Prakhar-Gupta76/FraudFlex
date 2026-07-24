@@ -70,7 +70,8 @@ Rules Engine          Anomaly Model
 | Feature calculator and PostgreSQL history reader | Implemented |
 | YAML rules engine | Implemented |
 | Isolation Forest anomaly model | Implemented |
-| Risk and decision engines | Planned |
+| Risk-score combiner | Implemented |
+| Decision and explanation engine | Planned |
 | PostgreSQL persistence | Planned |
 | FastAPI service | Planned |
 | Analyst dashboard | Planned |
@@ -497,6 +498,37 @@ Final Risk Score = min(100, Rules Contribution + Anomaly Contribution)
 
 The 70/30 split is an initial explainability and safety policy. It will be
 calibrated using test results rather than treated as permanent.
+
+The implemented `fraudflux_risk.InitialRiskScoreCombiner` applies the
+versioned `risk-combiner-1.0.0` policy. It accepts only integer contributions
+already constrained by their domain contracts, records the applied rules and
+anomaly contributions separately, calculates the uncapped sum, and applies
+the 100-point final cap.
+
+The result is a `CombinedRiskScore` containing:
+
+- Rules contribution
+- Anomaly contribution
+- Uncapped score
+- Final capped score
+- Score-policy version
+- Optional safe review override
+
+Overrides do not inflate the numeric score. They are carried separately so a
+high-confidence rule can require additional verification or a hold even when
+the numeric score is below an ordinary decision threshold. Approval overrides
+are rejected. The worker also verifies that the next decision stage preserves
+the combined score and honors any minimum review action before saving or
+publishing the result.
+
+Component 9 no longer assigns a category or writes a human explanation. Those
+responsibilities belong to the separate Component 10 decision engine. This
+separation allows numeric policy calibration without silently changing
+customer-facing actions.
+
+Scored events include both contributions, the uncapped and final values, the
+policy version, and any override. Completed decisions store the same combined
+score object for audit and replay.
 
 ### 4.10 Decision and Explanation Engine
 

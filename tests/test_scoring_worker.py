@@ -9,6 +9,7 @@ from typing import Any, Optional
 from fraudflux_simulator import TransactionSimulator
 from fraudflux_worker import (
     AnomalyEvaluation,
+    CombinedRiskScore,
     CustomerHistory,
     FeatureSet,
     FraudScoringWorker,
@@ -117,16 +118,32 @@ class Collaborators:
             model_version="model-v1",
         )
 
-    def combine(self, rules: Any, anomaly: Any) -> RiskDecision:
+    def combine(self, rules: Any, anomaly: Any) -> CombinedRiskScore:
         self.calls.append("combine")
         score = rules.contribution + anomaly.contribution
+        return CombinedRiskScore(
+            rules_contribution=rules.contribution,
+            anomaly_contribution=anomaly.contribution,
+            uncapped_score=score,
+            final_score=min(100, score),
+            policy_version="test-score-policy",
+            override_action=rules.override_action,
+        )
+
+    def decide(
+        self,
+        score: CombinedRiskScore,
+        rules: Any,
+        anomaly: Any,
+    ) -> RiskDecision:
+        self.calls.append("decide")
         actions = {
             RiskCategory.LOW: RecommendedAction.APPROVE,
             RiskCategory.MEDIUM: RecommendedAction.VERIFY,
             RiskCategory.HIGH: RecommendedAction.HOLD,
         }
         return RiskDecision(
-            final_score=score,
+            final_score=score.final_score,
             category=self.category,
             action=actions[self.category],
             explanation=("Amount is unusual",),
@@ -183,6 +200,7 @@ def build_worker(
         rules_engine=RulesAdapter(collaborators),
         anomaly_model=AnomalyAdapter(collaborators),
         risk_combiner=collaborators,
+        decision_engine=collaborators,
         store=resolved_store,
         publisher=resolved_publisher,
         clock=lambda: datetime(2026, 3, 1, tzinfo=timezone.utc),
@@ -214,7 +232,14 @@ class FraudScoringWorkerTests(unittest.TestCase):
 
         self.assertEqual(ProcessingOutcome.PROCESSED, outcome)
         self.assertEqual(
-            ["history", "features", "rules", "anomaly", "combine"],
+            [
+                "history",
+                "features",
+                "rules",
+                "anomaly",
+                "combine",
+                "decide",
+            ],
             collaborators.calls,
         )
         self.assertEqual(1, store.decision_count)
@@ -223,6 +248,8 @@ class FraudScoringWorkerTests(unittest.TestCase):
         risk = publisher.messages[0].payload["risk"]
         self.assertEqual("moderately_unusual", risk["anomaly_level"])
         self.assertEqual(0.0, risk["anomaly_inference_time_ms"])
+        self.assertEqual(32, risk["uncapped_score"])
+        self.assertEqual("test-score-policy", risk["score_policy_version"])
         self.assertEqual(1, len(consumer.commits))
         self.assertFalse(consumer.commits[0][1])
 
@@ -323,6 +350,58 @@ class FraudScoringWorkerTests(unittest.TestCase):
         collaborators.calculate = fail  # type: ignore[method-assign]
 
         with self.assertRaises(RuntimeError):
+            worker.process_message(FakeMessage(valid_event()))
+
+        self.assertEqual(0, len(consumer.commits))
+        self.assertEqual(0, store.decision_count)
+
+    def test_decision_must_use_the_combined_final_score(self) -> None:
+        worker, collaborators, _, consumer, store = build_worker()
+
+        def inconsistent_decision(
+            score: CombinedRiskScore,
+            rules: Any,
+            anomaly: Any,
+        ) -> RiskDecision:
+            return RiskDecision(
+                final_score=score.final_score + 1,
+                category=RiskCategory.LOW,
+                action=RecommendedAction.APPROVE,
+                explanation=("Inconsistent test decision",),
+            )
+
+        collaborators.decide = inconsistent_decision  # type: ignore[method-assign]
+
+        with self.assertRaisesRegex(ValueError, "does not match"):
+            worker.process_message(FakeMessage(valid_event()))
+
+        self.assertEqual(0, len(consumer.commits))
+        self.assertEqual(0, store.decision_count)
+
+    def test_decision_must_honor_a_hold_override(self) -> None:
+        worker, collaborators, _, consumer, store = build_worker()
+
+        def overridden_rules(
+            event: Any,
+            history: Any,
+            features: Any,
+        ) -> RuleEvaluation:
+            return RuleEvaluation(
+                contribution=20,
+                hits=(
+                    RuleHit(
+                        "HIGH_CONFIDENCE",
+                        20,
+                        "High-confidence signal",
+                    ),
+                ),
+                ruleset_version="rules-v1",
+                override_action=RecommendedAction.HOLD,
+            )
+
+        collaborators.evaluate_rules = overridden_rules  # type: ignore[method-assign]
+
+        with self.assertRaisesRegex(ValueError, "did not honor"):
             worker.process_message(FakeMessage(valid_event()))
 
         self.assertEqual(0, len(consumer.commits))

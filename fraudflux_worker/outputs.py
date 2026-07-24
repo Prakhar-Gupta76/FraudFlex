@@ -9,6 +9,7 @@ from fraudflux_validation import TransactionEvent
 
 from .domain import (
     AnomalyEvaluation,
+    CombinedRiskScore,
     OutboxMessage,
     RiskCategory,
     RiskDecision,
@@ -26,6 +27,7 @@ class DecisionOutputFactory:
         event: TransactionEvent,
         rules: RuleEvaluation,
         anomaly: AnomalyEvaluation,
+        combined_score: CombinedRiskScore,
         decision: RiskDecision,
         *,
         processed_at: datetime,
@@ -41,11 +43,20 @@ class DecisionOutputFactory:
             "transaction_id": event.transaction.transaction_id,
             "customer_id": event.transaction.customer_id,
             "risk": {
-                "rules_contribution": rules.contribution,
-                "anomaly_contribution": anomaly.contribution,
+                "rules_contribution": combined_score.rules_contribution,
+                "anomaly_contribution": (
+                    combined_score.anomaly_contribution
+                ),
+                "uncapped_score": combined_score.uncapped_score,
+                "score_policy_version": combined_score.policy_version,
+                "score_override_action": (
+                    combined_score.override_action.value
+                    if combined_score.override_action
+                    else None
+                ),
                 "anomaly_level": anomaly.level,
                 "anomaly_inference_time_ms": anomaly.inference_time_ms,
-                "final_score": decision.final_score,
+                "final_score": combined_score.final_score,
                 "category": decision.category.value,
                 "recommended_action": decision.action.value,
                 "explanation": list(decision.explanation),
@@ -89,7 +100,7 @@ class DecisionOutputFactory:
                         "score_event_id": score_event_id,
                         "transaction_id": event.transaction.transaction_id,
                         "customer_id": event.transaction.customer_id,
-                        "risk_score": decision.final_score,
+                        "risk_score": combined_score.final_score,
                         "risk_category": decision.category.value,
                         "recommended_action": decision.action.value,
                         "explanation": list(decision.explanation),

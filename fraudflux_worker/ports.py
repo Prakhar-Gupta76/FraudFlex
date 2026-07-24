@@ -8,6 +8,7 @@ from fraudflux_validation import TransactionEvent
 
 from .domain import (
     AnomalyEvaluation,
+    CombinedRiskScore,
     CustomerHistory,
     FeatureSet,
     OutboxMessage,
@@ -72,6 +73,15 @@ class AnomalyModel(Protocol):
 class RiskCombiner(Protocol):
     def combine(
         self,
+        rules: RuleEvaluation,
+        anomaly: AnomalyEvaluation,
+    ) -> CombinedRiskScore: ...
+
+
+class DecisionEngine(Protocol):
+    def decide(
+        self,
+        score: CombinedRiskScore,
         rules: RuleEvaluation,
         anomaly: AnomalyEvaluation,
     ) -> RiskDecision: ...
