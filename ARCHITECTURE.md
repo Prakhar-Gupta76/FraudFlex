@@ -69,7 +69,7 @@ Rules Engine          Anomaly Model
 | Fraud-scoring worker | Implemented orchestration |
 | Feature calculator and PostgreSQL history reader | Implemented |
 | YAML rules engine | Implemented |
-| Anomaly model | Planned |
+| Isolation Forest anomaly model | Implemented |
 | Risk and decision engines | Planned |
 | PostgreSQL persistence | Planned |
 | FastAPI service | Planned |
@@ -443,6 +443,45 @@ The model output is normalized to a contribution from 0 to 30:
 An anomaly is not proof of fraud. It is supporting evidence alongside explicit
 rules. Model output includes the raw score, normalized contribution, model
 version, important deviations, and inference time.
+
+The implemented `fraudflux_anomaly` package provides offline training,
+versioned artifact persistence, and in-process inference. Training accepts
+JSON Lines feature records through the `fraudflux-train-anomaly` command and
+uses a deterministic, single-threaded Isolation Forest configuration by
+default. Training requires at least 50 examples of normal behaviour; production
+training should use a much larger reviewed, point-in-time-safe dataset.
+
+The model uses a fixed `fraud-features-1.0.0` numeric schema. Heavy-tailed
+counts, ratios, distances, speeds, and time intervals receive a `log1p`
+transform. Missing, non-numeric, negative-for-log, infinite, or NaN inputs
+fail inference rather than producing an unreliable score.
+
+FraudFlux defines the raw anomaly score as the negative Isolation Forest
+decision function, so larger values mean more unusual behaviour. Training
+stores empirical normal-data percentiles:
+
+| Normal-training percentile | Contribution band |
+| ---: | ---: |
+| At or below the median | 0 |
+| Median to 90th | 1-5 |
+| 90th to 97th | 6-10 |
+| 97th to 99.5th | 11-20 |
+| Above 99.5th | 21-30 |
+
+This calibration makes the documented anomaly levels explicit while keeping
+the anomaly result as supporting evidence. Thresholds must be recalibrated
+against labelled replay data before production use.
+
+Important deviations are the largest robust z-scores relative to training
+medians and dispersion, limited to three human-readable signals. Inference
+time covers vectorization, model execution, normalization, and explanation.
+
+Artifacts atomically store the estimator, model and feature-schema versions,
+feature order and transforms, calibration anchors, explanation statistics,
+training timestamp and sample count, and the scikit-learn version. Inference
+rejects incompatible feature definitions and library versions. Joblib
+artifacts can execute code while loading and must only come from a trusted
+training pipeline.
 
 ### 4.9 Risk-Score Combiner
 

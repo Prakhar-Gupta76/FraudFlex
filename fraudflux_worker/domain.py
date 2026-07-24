@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Mapping, Optional, Tuple
@@ -66,10 +67,32 @@ class AnomalyEvaluation:
     raw_score: float
     deviations: Tuple[str, ...]
     model_version: str
+    inference_time_ms: float = 0.0
 
     def __post_init__(self) -> None:
         if not 0 <= self.contribution <= 30:
             raise ValueError("anomaly contribution must be between 0 and 30")
+        if not math.isfinite(self.raw_score):
+            raise ValueError("anomaly raw score must be finite")
+        if (
+            not math.isfinite(self.inference_time_ms)
+            or self.inference_time_ms < 0
+        ):
+            raise ValueError(
+                "anomaly inference time must be finite and non-negative"
+            )
+        if not self.model_version.strip():
+            raise ValueError("anomaly model version cannot be blank")
+
+    @property
+    def level(self) -> str:
+        if self.contribution <= 5:
+            return "normal"
+        if self.contribution <= 10:
+            return "slightly_unusual"
+        if self.contribution <= 20:
+            return "moderately_unusual"
+        return "highly_unusual"
 
 
 @dataclass(frozen=True)
@@ -106,4 +129,3 @@ class OutboxMessage:
     topic: str
     key: str
     payload: Mapping[str, Any]
-

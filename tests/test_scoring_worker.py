@@ -220,6 +220,9 @@ class FraudScoringWorkerTests(unittest.TestCase):
         self.assertEqual(1, store.decision_count)
         self.assertEqual(1, len(publisher.messages))
         self.assertEqual("transactions.scored", publisher.messages[0].topic)
+        risk = publisher.messages[0].payload["risk"]
+        self.assertEqual("moderately_unusual", risk["anomaly_level"])
+        self.assertEqual(0.0, risk["anomaly_inference_time_ms"])
         self.assertEqual(1, len(consumer.commits))
         self.assertFalse(consumer.commits[0][1])
 

@@ -43,6 +43,8 @@ class DecisionOutputFactory:
             "risk": {
                 "rules_contribution": rules.contribution,
                 "anomaly_contribution": anomaly.contribution,
+                "anomaly_level": anomaly.level,
+                "anomaly_inference_time_ms": anomaly.inference_time_ms,
                 "final_score": decision.final_score,
                 "category": decision.category.value,
                 "recommended_action": decision.action.value,
@@ -95,4 +97,3 @@ class DecisionOutputFactory:
                 )
             )
         return outputs
-
