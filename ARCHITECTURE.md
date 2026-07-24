@@ -73,6 +73,7 @@ Rules Engine          Anomaly Model
 | Risk-score combiner | Implemented |
 | Decision and explanation engine | Implemented |
 | PostgreSQL persistence | Implemented |
+| Scored and alert event contracts and publisher | Implemented |
 | FastAPI service | Planned |
 | Analyst dashboard | Planned |
 | Evaluation and monitoring | Planned |
@@ -642,6 +643,39 @@ high-risk results also create events in `fraud.alerts`.
 
 This separation allows downstream services to consume all decisions or only
 actionable alerts.
+
+The implemented `fraudflux_events` package defines strict, immutable Pydantic
+contracts for schema version `1.0`:
+
+- `ScoredTransactionEvent` is created for every completed decision and
+  published to `transactions.scored`.
+- `FraudAlertEvent` is created only for medium- and high-risk effective
+  categories and published to `fraud.alerts`.
+- `parse_decision_event` lets downstream consumers validate either event by
+  its `event_type` discriminator.
+
+Both event types include deterministic event IDs, the source event correlation
+ID, transaction and customer IDs, score/category/action details, explanations,
+triggered rules, anomaly deviations, ruleset/model/policy versions, and
+processing latency. Contract validation rejects unknown fields, naive
+timestamps, inconsistent score categories, invalid actions, or unsupported
+schema versions before publication.
+
+`DecisionOutputFactory` creates the validated contracts and writes them as
+pending outbox messages in the same PostgreSQL transaction as the decision.
+`KafkaOutputPublisher` then:
+
+1. Validates that the payload type matches its target topic.
+2. Serializes canonical JSON.
+3. Uses the customer ID as the Kafka key to preserve per-customer ordering.
+4. Adds event, schema, content-type, and outbox headers.
+5. Waits for Kafka delivery confirmation.
+6. Allows the worker to mark the outbox record published and commit its input
+   offset only after acknowledgement.
+
+Scored and alert IDs are derived from the input event ID. Redelivery therefore
+resumes any unpublished outbox messages without generating a second decision
+or duplicate alert.
 
 ### 4.13 FastAPI Service
 

@@ -9,7 +9,7 @@ from .domain import OutboxMessage, StoredDecision
 
 
 class InMemoryProcessingStore:
-    """Test/development store; PostgreSQL will replace it in Component 11."""
+    """Test/development alternative to the durable PostgreSQL store."""
 
     def __init__(self) -> None:
         self._lock = RLock()
@@ -82,4 +82,3 @@ class InMemoryProcessingStore:
             if message.outbox_id in identifiers:
                 raise ValueError("outbox IDs must be unique")
             identifiers.add(message.outbox_id)
-

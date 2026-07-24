@@ -67,6 +67,25 @@ docker compose exec kafka /opt/kafka/bin/kafka-topics.sh `
   --describe
 ```
 
+Inspect scored decisions or actionable alerts:
+
+```powershell
+docker compose exec kafka /opt/kafka/bin/kafka-console-consumer.sh `
+  --bootstrap-server localhost:9092 `
+  --topic transactions.scored `
+  --from-beginning
+
+docker compose exec kafka /opt/kafka/bin/kafka-console-consumer.sh `
+  --bootstrap-server localhost:9092 `
+  --topic fraud.alerts `
+  --from-beginning
+```
+
+The scoring worker uses validated schema `1.0` events, customer IDs as message
+keys, and synchronous delivery confirmation. Every completed decision appears
+in `transactions.scored`; only medium- and high-risk decisions appear in
+`fraud.alerts`.
+
 ## Live integration tests
 
 Once the broker is healthy:
@@ -86,4 +105,3 @@ unit-test runs.
 - Replication factor is 1.
 - Authentication and TLS are not configured.
 - Retention limits are intentionally small for an 8 GB development machine.
-

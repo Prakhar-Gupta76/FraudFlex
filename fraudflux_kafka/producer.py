@@ -161,6 +161,36 @@ class KafkaTransactionProducer:
             ("schema-version", event.schema_version.encode("utf-8")),
         ]
 
+        message = self.publish_serialized(
+            event_id=event.event_id,
+            topic=self.settings.topic,
+            key=key,
+            value=serialized,
+            headers=headers,
+        )
+
+        return PublishReceipt(
+            event_id=event.event_id,
+            transaction_id=event.transaction.transaction_id,
+            customer_id=customer_id,
+            topic=message.topic(),
+            partition=message.partition(),
+            offset=message.offset(),
+            serialized_size_bytes=len(serialized),
+        )
+
+    def publish_serialized(
+        self,
+        *,
+        event_id: str,
+        topic: str,
+        key: bytes,
+        value: bytes,
+        headers: KafkaHeaders,
+    ) -> DeliveredMessage:
+        """Reliably publish already validated and serialized event bytes."""
+        if not event_id.strip() or not topic.strip():
+            raise ValueError("event_id and topic cannot be blank")
         completed = threading.Event()
         delivery: dict[str, Any] = {}
 
@@ -172,8 +202,9 @@ class KafkaTransactionProducer:
             completed.set()
 
         self._enqueue_with_retry(
+            topic=topic,
             key=key,
-            value=serialized,
+            value=value,
             headers=headers,
             on_delivery=on_delivery,
         )
@@ -184,7 +215,7 @@ class KafkaTransactionProducer:
             code, retriable, fatal = _error_metadata(delivery_error)
             raise KafkaDeliveryError(
                 f"Kafka permanently failed to deliver event "
-                f"{event.event_id}: {delivery_error}",
+                f"{event_id}: {delivery_error}",
                 code=code,
                 retriable=retriable,
                 fatal=fatal,
@@ -192,15 +223,7 @@ class KafkaTransactionProducer:
             )
 
         message = delivery["message"]
-        return PublishReceipt(
-            event_id=event.event_id,
-            transaction_id=event.transaction.transaction_id,
-            customer_id=customer_id,
-            topic=message.topic(),
-            partition=message.partition(),
-            offset=message.offset(),
-            serialized_size_bytes=len(serialized),
-        )
+        return message
 
     def close(self, timeout_seconds: float = 5.0) -> None:
         remaining = self.client.flush(timeout_seconds)
@@ -216,6 +239,7 @@ class KafkaTransactionProducer:
     def _enqueue_with_retry(
         self,
         *,
+        topic: str,
         key: bytes,
         value: bytes,
         headers: KafkaHeaders,
@@ -225,7 +249,7 @@ class KafkaTransactionProducer:
         while True:
             try:
                 self.client.produce(
-                    topic=self.settings.topic,
+                    topic=topic,
                     key=key,
                     value=value,
                     headers=headers,
@@ -302,4 +326,3 @@ def _safe_method(candidate: Any, name: str, *, default: Any) -> Any:
         return method()
     except Exception:
         return default
-
