@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "fraudflux"
-version = "0.15.0"
+version = "0.16.0"
 description = "Real-time payment fraud detection system"
 requires-python = ">=3.10"
 dependencies = [
@@ -25,6 +25,7 @@ test = ["httpx>=0.27,<1"]
 fraudflux-kafka-check = "fraudflux_kafka.broker:main"
 fraudflux-simulate = "fraudflux_simulator.cli:main"
 fraudflux-train-anomaly = "fraudflux_anomaly.cli:main"
+fraudflux-evaluate = "fraudflux_evaluation.cli:main"
 
 [tool.setuptools.packages.find]
 include = [
@@ -32,6 +33,7 @@ include = [
     "fraudflux_api*",
     "fraudflux_decision*",
     "fraudflux_events*",
+    "fraudflux_evaluation*",
     "fraudflux_kafka*",
     "fraudflux_features*",
     "fraudflux_risk*",

@@ -77,7 +77,8 @@ Rules Engine          Anomaly Model
 | FastAPI service | Implemented |
 | Analyst dashboard | Implemented |
 | Analyst review workflow | Implemented |
-| Evaluation and monitoring | Planned |
+| Feedback and evaluation | Implemented |
+| Operational monitoring | Planned |
 
 ## 4. Component Flow
 
@@ -808,6 +809,32 @@ decisions to calculate:
 - Legitimate amount incorrectly held
 
 Analyst feedback does not trigger automatic retraining in the first MVP.
+
+The implemented `fraudflux_evaluation` package provides a deterministic,
+offline evaluator and the `fraudflux-evaluate` command. It joins completed
+`transaction.scored` events with either simulator ground truth or validated
+final analyst labels. `needs_further_investigation` is excluded because it is
+not a final label. If both sources label the same transaction, the analyst
+label takes precedence and the transaction is counted only once.
+
+Evaluation uses a versioned policy. By default, medium- and high-risk
+categories are positive system signals and low risk is negative. The positive
+categories can be changed for experiments without changing scoring behaviour.
+The evaluator rejects duplicate transaction IDs and missing decisions rather
+than silently biasing the report.
+
+Each report records:
+
+- Policy version, generation time, evaluated count, and label-source counts
+- True positives, true negatives, false positives, and false negatives
+- Precision, recall, F1, average precision as the step-wise precision-recall
+  AUC, and false-positive rate
+- Fraud amount detected and legitimate amount incorrectly held, in minor
+  currency units
+
+Zero-denominator metrics return `0.0`, so empty classes cannot cause a failed
+evaluation job. Evaluation reads decisions and labels only: it has no training
+dependency, does not update model artifacts, and cannot trigger retraining.
 
 ### 4.17 Monitoring and Audit
 

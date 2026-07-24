@@ -254,6 +254,23 @@ transactions are rare. The MVP should report:
 Results produced using synthetic data must be clearly labelled as simulation
 results and must not be presented as real-world banking performance.
 
+The implemented offline command accepts scored-event JSONL plus simulator
+ground-truth and/or final analyst-label JSONL:
+
+```powershell
+fraudflux-evaluate `
+  --decisions scored.jsonl `
+  --ground-truth simulator-evaluation.jsonl `
+  --analyst-labels analyst-labels.jsonl `
+  --output evaluation-report.json
+```
+
+Medium- and high-risk decisions count as positive signals by default. Final
+analyst labels take precedence over simulator labels, while
+`needs_further_investigation` is excluded. Amount metrics use minor currency
+units; one evaluation report should contain transactions in one currency.
+This workflow calculates metrics only and never triggers model retraining.
+
 ## Project Principles
 
 - Every risk decision must be explainable and auditable.
