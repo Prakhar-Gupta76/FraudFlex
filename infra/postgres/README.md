@@ -1,12 +1,14 @@
 # FraudFlux PostgreSQL history store
 
-The local PostgreSQL container is initialized with two ordered schema files:
+The local PostgreSQL container is initialized with three ordered schema files:
 
 - `001_feature_history.sql` creates the point-in-time history used by the
   customer feature calculator.
 - `002_operational_storage.sql` adds durable scoring decisions, alerts,
   analyst reviews, model/ruleset versions, audit history, rejected-event
   idempotency, and the Kafka outbox.
+- `003_analyst_review_history.sql` makes reviews append-only, records status
+  transitions, and permits interim reviews before a final resolution.
 
 The history schema contains:
 
@@ -35,6 +37,8 @@ created. For an existing local volume, apply the new migration explicitly:
 
 ```powershell
 Get-Content infra/postgres/002_operational_storage.sql |
+    docker compose exec -T postgres psql -U fraudflux -d fraudflux
+Get-Content infra/postgres/003_analyst_review_history.sql |
     docker compose exec -T postgres psql -U fraudflux -d fraudflux
 ```
 

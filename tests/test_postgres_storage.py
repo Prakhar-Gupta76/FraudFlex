@@ -30,6 +30,7 @@ from fraudflux_worker import (
 
 
 ROOT = Path(__file__).resolve().parents[1]
+NOW = "2026-07-24T10:00:00+00:00"
 
 
 class FakeCursor:
@@ -320,9 +321,17 @@ class PostgresOperationalRepositoryTests(unittest.TestCase):
         cursor = FakeCursor(
             {
                 "SET status = 'assigned'": [alert_row],
-                "FOR UPDATE": [{"alert_id": "ALERT-1"}],
-                "INSERT INTO analyst_reviews": [{"review_id": "REVIEW-1"}],
-                "SET status = 'resolved'": [{"alert_id": "ALERT-1"}],
+                "FOR UPDATE": [
+                    {
+                        "alert_id": "ALERT-1",
+                        "status": "assigned",
+                        "assigned_to": "analyst-1",
+                    }
+                ],
+                "INSERT INTO analyst_reviews": [
+                    {"review_id": "REVIEW-1", "reviewed_at": NOW}
+                ],
+                "SET status = %(new_status)s": [{"alert_id": "ALERT-1"}],
             }
         )
         repository = PostgresAlertRepository(
@@ -344,6 +353,8 @@ class PostgresOperationalRepositoryTests(unittest.TestCase):
 
         self.assertEqual(assigned.assigned_to, "analyst-1")
         self.assertTrue(reviewed)
+        self.assertEqual(reviewed.previous_status, "assigned")
+        self.assertEqual(reviewed.new_status, "resolved")
         audit_actions = [
             parameters["action"]
             for query, parameters in cursor.executions
@@ -353,6 +364,83 @@ class PostgresOperationalRepositoryTests(unittest.TestCase):
             audit_actions,
             ["alert.assigned", "alert.reviewed"],
         )
+        review_audit = [
+            parameters
+            for query, parameters in cursor.executions
+            if "INSERT INTO audit_history" in query
+        ][-1]
+        details = json.loads(review_audit["details"])
+        self.assertEqual(details["previous_status"], "assigned")
+        self.assertEqual(details["new_status"], "resolved")
+        self.assertEqual(details["reviewed_at"], NOW)
+
+    def test_interim_review_is_append_only_and_keeps_alert_active(self) -> None:
+        cursor = FakeCursor(
+            {
+                "FOR UPDATE": [
+                    {
+                        "alert_id": "ALERT-1",
+                        "status": "assigned",
+                        "assigned_to": "analyst-1",
+                    }
+                ],
+                "INSERT INTO analyst_reviews": [
+                    {"review_id": "REVIEW-2", "reviewed_at": NOW}
+                ],
+                "SET status = %(new_status)s": [{"alert_id": "ALERT-1"}],
+            }
+        )
+        repository = PostgresAlertRepository(
+            lambda: FakeConnection(cursor)
+        )
+
+        review = repository.review(
+            "ALERT-1",
+            review_id="REVIEW-2",
+            analyst_id="analyst-1",
+            outcome=ReviewOutcome.NEEDS_FURTHER_INVESTIGATION,
+            notes="Waiting for customer confirmation.",
+        )
+
+        self.assertIsNotNone(review)
+        self.assertEqual(review.new_status, "assigned")
+        insert_parameters = next(
+            parameters
+            for query, parameters in cursor.executions
+            if "INSERT INTO analyst_reviews" in query
+        )
+        self.assertEqual(
+            insert_parameters["outcome"],
+            "needs_further_investigation",
+        )
+        self.assertEqual(insert_parameters["previous_status"], "assigned")
+        self.assertEqual(insert_parameters["new_status"], "assigned")
+
+    def test_resolved_alert_cannot_overwrite_review_history(self) -> None:
+        cursor = FakeCursor(
+            {
+                "FOR UPDATE": [
+                    {
+                        "alert_id": "ALERT-1",
+                        "status": "resolved",
+                        "assigned_to": "analyst-1",
+                    }
+                ]
+            }
+        )
+        repository = PostgresAlertRepository(
+            lambda: FakeConnection(cursor)
+        )
+
+        review = repository.review(
+            "ALERT-1",
+            review_id="REVIEW-late",
+            analyst_id="analyst-2",
+            outcome=ReviewOutcome.LEGITIMATE,
+        )
+
+        self.assertIsNone(review)
+        self.assertEqual(len(cursor.executions), 1)
 
     def test_model_and_ruleset_versions_are_registered_once(self) -> None:
         digest = "a" * 64
@@ -488,6 +576,24 @@ class PostgresMigrationTests(unittest.TestCase):
 
         self.assertIn("001_feature_history.sql", compose)
         self.assertIn("002_operational_storage.sql", compose)
+        self.assertIn("003_analyst_review_history.sql", compose)
+
+    def test_review_history_migration_removes_single_review_limit(self) -> None:
+        migration = (
+            ROOT
+            / "infra"
+            / "postgres"
+            / "003_analyst_review_history.sql"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn(
+            "DROP CONSTRAINT IF EXISTS analyst_reviews_alert_id_key",
+            migration,
+        )
+        self.assertIn("previous_status", migration)
+        self.assertIn("new_status", migration)
+        self.assertIn("needs_further_investigation", migration)
+        self.assertIn("analyst_reviews_alert_time_idx", migration)
 
 
 if __name__ == "__main__":

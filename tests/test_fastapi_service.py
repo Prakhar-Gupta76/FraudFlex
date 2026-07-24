@@ -7,7 +7,7 @@ from typing import Any, Optional
 from fastapi.testclient import TestClient
 
 from fraudflux_api import create_app
-from fraudflux_storage import ReviewOutcome
+from fraudflux_storage import AnalystReviewRecord, ReviewOutcome
 from tests.test_scoring_worker import build_worker, valid_event
 
 
@@ -89,6 +89,7 @@ def alert_detail() -> dict[str, Any]:
         "score_policy_version": "score-v1",
         "decision_policy_version": "decision-v1",
         "processing_latency_ms": 4.1,
+        "review_history": [],
     }
 
 
@@ -166,7 +167,7 @@ class FakeAlerts:
         analyst_id: str,
         outcome: ReviewOutcome,
         notes: Optional[str] = None,
-    ) -> bool:
+    ) -> Optional[AnalystReviewRecord]:
         if self.missing:
             raise KeyError(alert_id)
         self.reviews.append(
@@ -178,7 +179,27 @@ class FakeAlerts:
                 "notes": notes,
             }
         )
-        return self.result
+        if not self.result:
+            return None
+        status = (
+            "resolved"
+            if outcome
+            in {
+                ReviewOutcome.CONFIRMED_FRAUD,
+                ReviewOutcome.LEGITIMATE,
+            }
+            else "open"
+        )
+        return AnalystReviewRecord(
+            review_id=review_id,
+            alert_id=alert_id,
+            analyst_id=analyst_id,
+            outcome=outcome,
+            notes=notes,
+            previous_status="open",
+            new_status=status,
+            reviewed_at=NOW,
+        )
 
 
 class FastApiServiceTests(unittest.TestCase):
@@ -251,6 +272,24 @@ class FastApiServiceTests(unittest.TestCase):
         )
         self.assertEqual(found.json()["transaction_id"], "TXN-1")
         self.assertEqual(missing.status_code, 404)
+
+    def test_interim_review_keeps_alert_active(self) -> None:
+        response = self.client.post(
+            "/alerts/ALERT-1/review",
+            json={
+                "review_id": "REVIEW-interim",
+                "analyst_id": "analyst-1",
+                "outcome": "needs_further_investigation",
+                "notes": "Waiting for customer confirmation.",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["status"], "open")
+        self.assertEqual(
+            response.json()["previous_status"],
+            "open",
+        )
 
     def test_alert_queries_filter_and_include_explanations(self) -> None:
         listed = self.client.get("/alerts?status=open")

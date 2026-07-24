@@ -15,6 +15,7 @@ services:
       - postgres-data:/var/lib/postgresql/data
       - ./infra/postgres/001_feature_history.sql:/docker-entrypoint-initdb.d/001_feature_history.sql:ro
       - ./infra/postgres/002_operational_storage.sql:/docker-entrypoint-initdb.d/002_operational_storage.sql:ro
+      - ./infra/postgres/003_analyst_review_history.sql:/docker-entrypoint-initdb.d/003_analyst_review_history.sql:ro
     healthcheck:
       test:
         - CMD-SHELL

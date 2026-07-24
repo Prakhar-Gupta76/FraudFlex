@@ -10,7 +10,7 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
-from fraudflux_storage import ReviewOutcome
+from fraudflux_storage import AnalystReviewRecord, ReviewOutcome
 from fraudflux_validation import TransactionEvent
 from fraudflux_worker import DecisionProcessor, ProcessedDecision
 
@@ -70,7 +70,7 @@ class AlertReviewRepository(Protocol):
         analyst_id: str,
         outcome: ReviewOutcome,
         notes: Optional[str] = None,
-    ) -> bool: ...
+    ) -> Optional[AnalystReviewRecord]: ...
 
 
 def create_app(
@@ -88,7 +88,7 @@ def create_app(
         raise ValueError("live_interval_seconds must be positive")
     app = FastAPI(
         title="FraudFlux Risk API",
-        version="0.14.0",
+        version="0.15.0",
         description=(
             "Synchronous scoring and analyst-query API for simulated "
             "FraudFlux transactions."
@@ -196,7 +196,7 @@ def create_app(
         request: AnalystReviewRequest,
     ) -> AnalystReviewResponse:
         try:
-            created = alerts.review(
+            review = alerts.review(
                 alert_id,
                 review_id=request.review_id,
                 analyst_id=request.analyst_id,
@@ -208,16 +208,18 @@ def create_app(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Alert not found",
             ) from exc
-        if not created:
+        if review is None:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
-                detail="Alert already has a final analyst review",
+                detail="Review ID already exists or alert is resolved",
             )
         return AnalystReviewResponse(
             alert_id=alert_id,
             review_id=request.review_id,
             outcome=request.outcome,
-            status="resolved",
+            previous_status=review.previous_status,
+            status=review.new_status,
+            reviewed_at=review.reviewed_at,
         )
 
     @app.get(
@@ -270,7 +272,7 @@ def create_app(
         return HealthResponse(
             status="healthy" if database_healthy else "degraded",
             service="fraudflux-api",
-            version="0.14.0",
+            version="0.15.0",
             checks={"database": state},
         )
 

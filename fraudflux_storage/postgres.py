@@ -351,7 +351,20 @@ class PostgresVersionRepository:
 class ReviewOutcome(str, Enum):
     CONFIRMED_FRAUD = "confirmed_fraud"
     LEGITIMATE = "legitimate"
-    NEEDS_MORE_INFORMATION = "needs_more_information"
+    NEEDS_FURTHER_INVESTIGATION = "needs_further_investigation"
+    NEEDS_MORE_INFORMATION = "needs_further_investigation"
+
+
+@dataclass(frozen=True)
+class AnalystReviewRecord:
+    review_id: str
+    alert_id: str
+    analyst_id: str
+    outcome: ReviewOutcome
+    notes: Optional[str]
+    previous_status: str
+    new_status: str
+    reviewed_at: str
 
 
 @dataclass(frozen=True)
@@ -418,7 +431,7 @@ class PostgresAlertRepository:
         analyst_id: str,
         outcome: ReviewOutcome,
         notes: Optional[str] = None,
-    ) -> bool:
+    ) -> Optional[AnalystReviewRecord]:
         if not review_id.strip() or not analyst_id.strip():
             raise ValueError("review_id and analyst_id cannot be blank")
         with self.connection_factory() as connection:
@@ -427,8 +440,25 @@ class PostgresAlertRepository:
                     _LOCK_ALERT,
                     {"alert_id": alert_id},
                 )
-                if cursor.fetchone() is None:
+                alert = cursor.fetchone()
+                if alert is None:
                     raise KeyError(f"alert {alert_id} does not exist")
+                previous_status = alert["status"]
+                if previous_status == "resolved":
+                    return None
+                final_outcomes = {
+                    ReviewOutcome.CONFIRMED_FRAUD,
+                    ReviewOutcome.LEGITIMATE,
+                }
+                new_status = (
+                    "resolved"
+                    if outcome in final_outcomes
+                    else (
+                        "assigned"
+                        if alert.get("assigned_to")
+                        else "open"
+                    )
+                )
                 cursor.execute(
                     _INSERT_REVIEW,
                     {
@@ -437,16 +467,23 @@ class PostgresAlertRepository:
                         "analyst_id": analyst_id,
                         "outcome": outcome.value,
                         "notes": notes,
+                        "previous_status": previous_status,
+                        "new_status": new_status,
+                    },
+                )
+                review = cursor.fetchone()
+                if review is None:
+                    return None
+                cursor.execute(
+                    _TRANSITION_ALERT_STATUS,
+                    {
+                        "alert_id": alert_id,
+                        "new_status": new_status,
                     },
                 )
                 if cursor.fetchone() is None:
-                    return False
-                cursor.execute(
-                    _RESOLVE_ALERT,
-                    {"alert_id": alert_id},
-                )
-                if cursor.fetchone() is None:
                     raise KeyError(f"alert {alert_id} does not exist")
+                reviewed_at = str(review["reviewed_at"])
                 cursor.execute(
                     _INSERT_AUDIT,
                     {
@@ -459,11 +496,23 @@ class PostgresAlertRepository:
                                 "review_id": review_id,
                                 "outcome": outcome.value,
                                 "notes": notes,
+                                "previous_status": previous_status,
+                                "new_status": new_status,
+                                "reviewed_at": reviewed_at,
                             }
                         ),
                     },
                 )
-        return True
+        return AnalystReviewRecord(
+            review_id=review["review_id"],
+            alert_id=alert_id,
+            analyst_id=analyst_id,
+            outcome=outcome,
+            notes=notes,
+            previous_status=previous_status,
+            new_status=new_status,
+            reviewed_at=reviewed_at,
+        )
 
 
 class PostgresQueryRepository:
@@ -765,6 +814,7 @@ def _normalize_query_row(row: Mapping[str, Any]) -> Mapping[str, Any]:
             "rule_hits",
             "anomaly_deviations",
             "feature_values",
+            "review_history",
         }
         else value
         for key, value in row.items()
@@ -950,7 +1000,7 @@ RETURNING alert_id, decision_record_id, customer_id, transaction_id, status,
 """
 
 _LOCK_ALERT = """
-SELECT alert_id
+SELECT alert_id, status, assigned_to
 FROM fraud_alerts
 WHERE alert_id = %(alert_id)s
 FOR UPDATE
@@ -958,18 +1008,20 @@ FOR UPDATE
 
 _INSERT_REVIEW = """
 INSERT INTO analyst_reviews (
-    review_id, alert_id, analyst_id, outcome, notes
+    review_id, alert_id, analyst_id, outcome, notes,
+    previous_status, new_status
 ) VALUES (
-    %(review_id)s, %(alert_id)s, %(analyst_id)s, %(outcome)s, %(notes)s
+    %(review_id)s, %(alert_id)s, %(analyst_id)s, %(outcome)s, %(notes)s,
+    %(previous_status)s, %(new_status)s
 )
-ON CONFLICT (alert_id) DO NOTHING
-RETURNING review_id
+ON CONFLICT (review_id) DO NOTHING
+RETURNING review_id, reviewed_at
 """
 
-_RESOLVE_ALERT = """
+_TRANSITION_ALERT_STATUS = """
 UPDATE fraud_alerts
-SET status = 'resolved', updated_at = CURRENT_TIMESTAMP
-WHERE alert_id = %(alert_id)s
+SET status = %(new_status)s, updated_at = CURRENT_TIMESTAMP
+WHERE alert_id = %(alert_id)s AND status <> 'resolved'
 RETURNING alert_id
 """
 
@@ -1031,10 +1083,35 @@ SELECT fa.alert_id, fa.transaction_id, fa.customer_id, fa.status,
        rd.score_policy_version, rd.decision_policy_version,
        rd.processing_latency_ms, ar.review_id, ar.analyst_id,
        ar.outcome AS review_outcome, ar.notes AS review_notes,
-       ar.reviewed_at
+       ar.reviewed_at,
+       COALESCE(
+           (
+               SELECT jsonb_agg(
+                   jsonb_build_object(
+                       'review_id', history.review_id,
+                       'analyst_id', history.analyst_id,
+                       'outcome', history.outcome,
+                       'notes', history.notes,
+                       'previous_status', history.previous_status,
+                       'new_status', history.new_status,
+                       'reviewed_at', history.reviewed_at
+                   )
+                   ORDER BY history.reviewed_at, history.review_id
+               )
+               FROM analyst_reviews AS history
+               WHERE history.alert_id = fa.alert_id
+           ),
+           '[]'::jsonb
+       ) AS review_history
 FROM fraud_alerts AS fa
 JOIN risk_decisions AS rd ON rd.record_id = fa.decision_record_id
-LEFT JOIN analyst_reviews AS ar ON ar.alert_id = fa.alert_id
+LEFT JOIN LATERAL (
+    SELECT review_id, analyst_id, outcome, notes, reviewed_at
+    FROM analyst_reviews
+    WHERE alert_id = fa.alert_id
+    ORDER BY reviewed_at DESC, review_id DESC
+    LIMIT 1
+) AS ar ON TRUE
 WHERE fa.alert_id = %(alert_id)s
 """
 

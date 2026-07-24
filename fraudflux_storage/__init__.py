@@ -2,6 +2,7 @@
 
 from .postgres import (
     AlertRecord,
+    AnalystReviewRecord,
     CustomerProfile,
     PostgresAlertRepository,
     PostgresCustomerProfileRepository,
@@ -15,6 +16,7 @@ from .postgres import (
 
 __all__ = [
     "AlertRecord",
+    "AnalystReviewRecord",
     "CustomerProfile",
     "PostgresAlertRepository",
     "PostgresCustomerProfileRepository",

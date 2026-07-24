@@ -76,6 +76,7 @@ Rules Engine          Anomaly Model
 | Scored and alert event contracts and publisher | Implemented |
 | FastAPI service | Implemented |
 | Analyst dashboard | Implemented |
+| Analyst review workflow | Implemented |
 | Evaluation and monitoring | Planned |
 
 ## 4. Component Flow
@@ -773,6 +774,23 @@ An analyst can classify an alert as:
 
 The audit record retains analyst identity, notes, old and new status, and
 review time. Existing history is not overwritten.
+
+Analyst reviews are append-only records. Every entry retains its review and
+alert IDs, analyst identity, outcome, notes, previous and new alert status, and
+database-generated review timestamp. A matching audit entry records the same
+transition facts.
+
+`confirmed_fraud` and `legitimate` are final outcomes and transition the alert
+to `resolved`. `needs_further_investigation` is interim: it keeps the alert
+`open` or `assigned`, allowing another review after more evidence is gathered.
+Resolved alerts reject further reviews, and duplicate review IDs are
+idempotently rejected.
+
+Alert details return the complete review timeline in chronological order while
+retaining the latest review fields for convenient display. The dashboard
+renders that timeline without editing or deleting previous entries. The
+versioned database change is
+`infra/postgres/003_analyst_review_history.sql`.
 
 ### 4.16 Feedback and Evaluation
 

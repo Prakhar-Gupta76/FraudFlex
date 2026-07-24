@@ -89,6 +89,20 @@ export interface AlertDetail extends AlertSummary {
   review_outcome: string | null;
   review_notes: string | null;
   reviewed_at: string | null;
+  review_history: ReviewHistoryItem[];
+}
+
+export interface ReviewHistoryItem {
+  review_id: string;
+  analyst_id: string;
+  outcome:
+    | "confirmed_fraud"
+    | "legitimate"
+    | "needs_further_investigation";
+  notes: string | null;
+  previous_status: "open" | "assigned";
+  new_status: AlertStatus;
+  reviewed_at: string;
 }
 
 export interface ReviewInput {
@@ -96,6 +110,6 @@ export interface ReviewInput {
   outcome:
     | "confirmed_fraud"
     | "legitimate"
-    | "needs_more_information";
+    | "needs_further_investigation";
   notes?: string;
 }

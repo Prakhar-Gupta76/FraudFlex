@@ -123,6 +123,17 @@ class AlertDetail(AlertSummary):
     review_outcome: Optional[ReviewOutcome] = None
     review_notes: Optional[str] = None
     reviewed_at: Optional[datetime] = None
+    review_history: tuple["AnalystReviewHistoryItem", ...] = ()
+
+
+class AnalystReviewHistoryItem(ApiModel):
+    review_id: str
+    analyst_id: str
+    outcome: ReviewOutcome
+    notes: Optional[str]
+    previous_status: Literal["open", "assigned"]
+    new_status: Literal["open", "assigned", "resolved"]
+    reviewed_at: datetime
 
 
 class AnalystReviewRequest(ApiModel):
@@ -140,7 +151,9 @@ class AnalystReviewResponse(ApiModel):
     alert_id: str
     review_id: str
     outcome: ReviewOutcome
-    status: Literal["resolved"]
+    previous_status: Literal["open", "assigned"]
+    status: Literal["open", "assigned", "resolved"]
+    reviewed_at: datetime
 
 
 class DashboardSummary(ApiModel):

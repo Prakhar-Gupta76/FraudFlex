@@ -31,6 +31,7 @@ class PostgresStorageIntegrationTests(unittest.TestCase):
             for filename in (
                 "001_feature_history.sql",
                 "002_operational_storage.sql",
+                "003_analyst_review_history.sql",
             ):
                 cursor.execute(
                     (
@@ -43,11 +44,16 @@ class PostgresStorageIntegrationTests(unittest.TestCase):
         cls.connection.close()
 
     def test_migrations_are_repeatable_and_tables_are_available(self) -> None:
-        migration = (
-            ROOT / "infra" / "postgres" / "002_operational_storage.sql"
-        ).read_text(encoding="utf-8")
         with self.connection.cursor() as cursor:
-            cursor.execute(migration)
+            for filename in (
+                "002_operational_storage.sql",
+                "003_analyst_review_history.sql",
+            ):
+                cursor.execute(
+                    (
+                        ROOT / "infra" / "postgres" / filename
+                    ).read_text(encoding="utf-8")
+                )
             cursor.execute(
                 """
                 SELECT table_name
