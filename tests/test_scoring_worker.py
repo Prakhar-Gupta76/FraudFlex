@@ -87,9 +87,12 @@ class Collaborators:
         self.calls: list[str] = []
         self.category = category
 
-    def load(self, customer_id: str) -> CustomerHistory:
+    def load(self, event: Any) -> CustomerHistory:
         self.calls.append("history")
-        return CustomerHistory(customer_id, {"transaction_count": 12})
+        return CustomerHistory(
+            event.transaction.customer_id,
+            {"transaction_count": 12},
+        )
 
     def calculate(self, event: Any, history: Any) -> FeatureSet:
         self.calls.append("features")

@@ -67,7 +67,7 @@ Rules Engine          Anomaly Model
 | Kafka producer | Implemented |
 | Kafka broker and topics | Implemented |
 | Fraud-scoring worker | Implemented orchestration |
-| Feature calculator | Planned |
+| Feature calculator and PostgreSQL history reader | Implemented |
 | Rules engine | Planned |
 | Anomaly model | Planned |
 | Risk and decision engines | Planned |
@@ -340,6 +340,42 @@ Merchant and authentication features:
 
 The first MVP uses PostgreSQL and a small in-memory cache. Redis and Feast are
 Phase 2 improvements.
+
+The implemented `fraudflux_features` package calculates point-in-time-safe
+features. The history provider receives the complete event and queries only
+transactions whose `transaction_time` is earlier than the transaction being
+scored. This prevents future-data leakage during replay and model evaluation.
+Amount baselines use only transactions in the same currency.
+
+Default feature definitions:
+
+| Feature | MVP definition |
+| --- | --- |
+| Normal amount | Median of same-currency payments from the previous 90 days |
+| Amount deviation | Absolute z-score; relative deviation is used when variance is zero |
+| Recent maximum | Maximum same-currency amount from the previous 30 days |
+| Velocity | Counts and amount totals over event-time windows of 2 minutes and 1 hour |
+| Device age | Seconds between first known use and the current transaction |
+| Impossible travel | At least 100 km and an implied speed above 900 km/h |
+| Unusual location | Country or city absent from historical and configured usual locations |
+| Category rarity | One minus the historical frequency of the current merchant category |
+| Recent authentication failures | Maximum of recorded failures and the event's 10-minute failure counter |
+
+Cold-start customers receive finite neutral amount and location values plus
+explicit history-presence flags. The rule engine and model can therefore
+distinguish missing history from genuinely normal behaviour.
+
+PostgreSQL stores customer profiles, transaction history, device deny-list
+entries, and merchant risk profiles. Queries are indexed by customer, device,
+merchant, and transaction time. The included bounded TTL cache is keyed by
+event ID, so it accelerates exact retries without allowing a stale snapshot
+from one transaction to hide a later transaction. It supports customer-level
+and global invalidation for the future history writer.
+
+The PostgreSQL schema is initialized from
+`infra/postgres/001_feature_history.sql`. The local Compose configuration runs
+PostgreSQL with a 384 MB memory limit to remain suitable for the MVP's 8 GB
+development machine.
 
 ### 4.7 Rules Engine
 

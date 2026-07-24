@@ -80,9 +80,7 @@ class FraudScoringWorker:
         existing = self.store.get_decision(event.event_id)
         created = False
         if existing is None:
-            history = self.history_provider.load(
-                event.transaction.customer_id
-            )
+            history = self.history_provider.load(event)
             features = self.feature_calculator.calculate(event, history)
             rules = self.rules_engine.evaluate(event, history, features)
             anomaly = self.anomaly_model.evaluate(features)
@@ -182,4 +180,3 @@ class FraudScoringWorker:
 
     def _commit(self, message: ConsumedMessage) -> None:
         self.consumer.commit(message=message, asynchronous=False)
-

@@ -1,6 +1,29 @@
 name: fraudflux
 
 services:
+  postgres:
+    image: postgres:16.4-alpine
+    container_name: fraudflux-postgres
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:5432:5432"
+    environment:
+      POSTGRES_DB: "fraudflux"
+      POSTGRES_USER: "fraudflux"
+      POSTGRES_PASSWORD: "fraudflux"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./infra/postgres/001_feature_history.sql:/docker-entrypoint-initdb.d/001_feature_history.sql:ro
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U fraudflux -d fraudflux
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    mem_limit: 384m
+
   kafka:
     image: apache/kafka:4.3.1
     container_name: fraudflux-kafka
@@ -65,3 +88,5 @@ services:
 volumes:
   kafka-data:
     name: fraudflux-kafka-data
+  postgres-data:
+    name: fraudflux-postgres-data

@@ -45,7 +45,7 @@ class Consumer(Protocol):
 
 
 class HistoryProvider(Protocol):
-    def load(self, customer_id: str) -> CustomerHistory: ...
+    def load(self, event: TransactionEvent) -> CustomerHistory: ...
 
 
 class FeatureCalculator(Protocol):
@@ -99,4 +99,3 @@ class ProcessingStore(Protocol):
 
 class OutputPublisher(Protocol):
     def publish(self, message: OutboxMessage) -> Any: ...
-
