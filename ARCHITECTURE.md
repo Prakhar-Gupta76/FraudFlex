@@ -68,7 +68,7 @@ Rules Engine          Anomaly Model
 | Kafka broker and topics | Implemented |
 | Fraud-scoring worker | Implemented orchestration |
 | Feature calculator and PostgreSQL history reader | Implemented |
-| Rules engine | Planned |
+| YAML rules engine | Implemented |
 | Anomaly model | Planned |
 | Risk and decision engines | Planned |
 | PostgreSQL persistence | Planned |
@@ -400,6 +400,31 @@ It returns:
 - Decision overrides
 
 Only the strongest matching rule in the same group is counted.
+
+The implemented `fraudflux_rules` package loads rules with `yaml.safe_load`
+and validates the complete document before it can score transactions.
+Unknown configuration keys, duplicate rule IDs, missing conditions, invalid
+operators, unsafe approval overrides, and scores outside the allowed range
+are rejected.
+
+Rules can read bare feature names or explicitly address `features.*`,
+`transaction.*`, `event.*`, and `history.*` values. Conditions support
+equality, ordering, membership, and boolean checks. An `all` block requires
+every condition; an `any` block requires at least one. When both blocks exist,
+both requirements must pass.
+
+Matching rules are reduced to the highest-point rule in each group. Equal
+points retain the rule declared first, making results deterministic. Winners
+from different groups are combined, the visible hit list retains each rule's
+configured points and reason, and the contribution is capped at the lower of
+the configured maximum and 70. If several winning rules request overrides,
+the safest action wins: hold takes precedence over additional verification.
+Rules are never allowed to force approval.
+
+The packaged `mvp-1.0.0` ruleset includes amount, velocity, card-testing,
+device, location, authentication, merchant-category, and merchant-reputation
+policies. Dormant-account and unusual-hour rules will be introduced only
+after their required historical features are implemented.
 
 ### 4.8 Anomaly Model
 

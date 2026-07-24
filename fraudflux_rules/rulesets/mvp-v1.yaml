@@ -1,0 +1,169 @@
+version: mvp-1.0.0
+max_contribution: 70
+rules:
+  - id: AMOUNT_3X_NORMAL
+    group: amount
+    points: 10
+    reason: Amount is at least three times the customer's normal amount
+    when:
+      all:
+        - field: amount_to_normal_ratio
+          operator: gte
+          value: 3
+
+  - id: AMOUNT_5X_NORMAL
+    group: amount
+    points: 20
+    reason: Amount is at least five times the customer's normal amount
+    when:
+      all:
+        - field: amount_to_normal_ratio
+          operator: gte
+          value: 5
+
+  - id: AMOUNT_10X_NORMAL
+    group: amount
+    points: 30
+    reason: Amount is at least ten times the customer's normal amount
+    when:
+      all:
+        - field: amount_to_normal_ratio
+          operator: gte
+          value: 10
+
+  - id: VELOCITY_3_IN_2M
+    group: velocity
+    points: 10
+    reason: At least three previous transactions occurred within two minutes
+    when:
+      all:
+        - field: transactions_previous_2m
+          operator: gte
+          value: 3
+
+  - id: VELOCITY_6_IN_2M
+    group: velocity
+    points: 20
+    reason: More than five previous transactions occurred within two minutes
+    when:
+      all:
+        - field: transactions_previous_2m
+          operator: gte
+          value: 6
+
+  - id: CARD_TESTING_PATTERN
+    group: card_testing
+    points: 15
+    reason: Repeated small payments span several merchants
+    when:
+      all:
+        - field: amount_to_normal_ratio
+          operator: lte
+          value: 0.25
+        - field: recent_merchant_count_1h
+          operator: gte
+          value: 4
+        - field: transactions_previous_2m
+          operator: gte
+          value: 3
+
+  - id: NEW_DEVICE
+    group: device
+    points: 15
+    reason: Transaction uses a new device
+    when:
+      all:
+        - field: device_is_new
+          operator: truthy
+
+  - id: SHARED_DEVICE
+    group: device
+    points: 20
+    reason: Device is used by at least three customer accounts
+    when:
+      all:
+        - field: device_account_count
+          operator: gte
+          value: 3
+
+  - id: DENY_LISTED_DEVICE
+    group: device
+    points: 40
+    reason: Device is present on the internal deny list
+    override_action: hold_for_review
+    when:
+      all:
+        - field: device_deny_listed
+          operator: truthy
+
+  - id: UNUSUAL_REGION
+    group: location
+    points: 10
+    reason: Transaction originates outside the customer's usual region
+    when:
+      all:
+        - field: unusual_region
+          operator: truthy
+
+  - id: UNUSUAL_COUNTRY
+    group: location
+    points: 15
+    reason: Transaction originates from an unusual country
+    when:
+      all:
+        - field: unusual_country
+          operator: truthy
+
+  - id: IMPOSSIBLE_TRAVEL
+    group: location
+    points: 30
+    reason: Travel speed from the previous transaction is physically implausible
+    when:
+      all:
+        - field: impossible_travel
+          operator: truthy
+
+  - id: AUTH_FAILURES_3
+    group: authentication
+    points: 10
+    reason: At least three recent authentication failures were observed
+    when:
+      all:
+        - field: recent_authentication_failures_10m
+          operator: gte
+          value: 3
+
+  - id: AUTH_FAILURES_THEN_SUCCESS_5
+    group: authentication
+    points: 20
+    reason: Five authentication failures were followed by a successful payment
+    when:
+      all:
+        - field: recent_authentication_failures_10m
+          operator: gte
+          value: 5
+        - field: authentication_failures_then_success
+          operator: truthy
+
+  - id: RARE_MERCHANT_CATEGORY
+    group: merchant_category
+    points: 10
+    reason: Merchant category is rare for this customer
+    when:
+      all:
+        - field: merchant_category_rarity
+          operator: gte
+          value: 0.8
+        - field: amount_history_count
+          operator: gt
+          value: 0
+
+  - id: HIGH_RISK_MERCHANT
+    group: merchant_reputation
+    points: 15
+    reason: Merchant has an elevated recent fraud rate
+    when:
+      all:
+        - field: merchant_fraud_rate
+          operator: gte
+          value: 0.1
