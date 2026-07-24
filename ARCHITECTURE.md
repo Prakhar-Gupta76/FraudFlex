@@ -65,7 +65,7 @@ Rules Engine          Anomaly Model
 | Transaction simulator | Implemented first |
 | Transaction validation | Implemented |
 | Kafka producer | Implemented |
-| Kafka broker and topics | Planned |
+| Kafka broker and topics | Implemented |
 | Fraud-scoring worker | Planned |
 | Feature calculator | Planned |
 | Rules engine | Planned |
@@ -207,6 +207,40 @@ The first MVP uses one Kafka broker in KRaft mode.
 
 Kafka separates event generation from scoring. When the scoring worker is
 temporarily unavailable, retained events can be processed after it restarts.
+
+The implemented local broker uses:
+
+- Official `apache/kafka:4.3.1` JVM image
+- One combined broker/controller node in KRaft mode
+- Separate internal, host, and controller listeners
+- A persistent Docker named volume
+- A 512 MB JVM heap and 1 GB container memory limit
+- Automatic topic creation disabled
+- Broker health checks before topic initialization
+- Idempotent topic creation with explicit partitions, replication, and
+  retention
+
+Topic settings for the 8 GB development machine are:
+
+| Topic | Partitions | Replication | Time retention | Per-partition size |
+| --- | ---: | ---: | ---: | ---: |
+| `transactions.raw` | 3 | 1 | 24 hours | 64 MiB |
+| `transactions.scored` | 3 | 1 | 24 hours | 64 MiB |
+| `fraud.alerts` | 1 | 1 | 7 days | 128 MiB |
+| `transactions.dead-letter` | 1 | 1 | 7 days | 128 MiB |
+
+Using the customer ID as the key keeps one customer's records in the same
+partition and therefore ordered within that partition. Kafka retains
+acknowledged records independently of whether the future scoring worker is
+running. A new or restarted consumer can resume using its committed offset.
+
+This single-broker configuration provides persistence across ordinary container
+restarts but no broker-level high availability. Replication factor 1 is an MVP
+constraint and must not be used as a production durability design.
+
+The local listener is plaintext and bound to `127.0.0.1`; it is for development
+only. Production deployments require authentication, encryption, access
+control, multiple brokers, and an appropriate replication factor.
 
 ### 4.5 Fraud-Scoring Worker
 
