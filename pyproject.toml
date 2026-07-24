@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "fraudflux"
-version = "0.16.0"
+version = "0.17.0"
 description = "Real-time payment fraud detection system"
 requires-python = ">=3.10"
 dependencies = [
@@ -35,6 +35,7 @@ include = [
     "fraudflux_events*",
     "fraudflux_evaluation*",
     "fraudflux_kafka*",
+    "fraudflux_monitoring*",
     "fraudflux_features*",
     "fraudflux_risk*",
     "fraudflux_rules*",

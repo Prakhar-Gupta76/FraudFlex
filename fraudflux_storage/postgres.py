@@ -135,11 +135,39 @@ class PostgresProcessingStore:
                         "details": _json(
                             {
                                 "event_id": decision.input_event_id,
+                                "event_time": event.event_time,
+                                "transaction_time": (
+                                    event.transaction.transaction_time
+                                ),
+                                "processed_at": decision.processed_at,
                                 "final_score": (
                                     decision.combined_score.final_score
                                 ),
                                 "category": (
                                     decision.decision.category.value
+                                ),
+                                "recommended_action": (
+                                    decision.decision.action.value
+                                ),
+                                "ruleset_version": (
+                                    decision.rules.ruleset_version
+                                ),
+                                "model_version": (
+                                    decision.anomaly.model_version
+                                ),
+                                "triggered_rules": [
+                                    {
+                                        "rule_id": hit.rule_id,
+                                        "points": hit.points,
+                                        "reason": hit.reason,
+                                    }
+                                    for hit in decision.rules.hits
+                                ],
+                                "score_policy_version": (
+                                    decision.combined_score.policy_version
+                                ),
+                                "decision_policy_version": (
+                                    decision.decision.decision_policy_version
                                 ),
                             }
                         ),

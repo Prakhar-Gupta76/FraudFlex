@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from threading import Event
 from typing import Callable, Optional
 
+from fraudflux_monitoring import OperationalMonitor
 from fraudflux_validation import (
     DeadLetterSource,
     TransactionValidationError,
@@ -51,6 +52,7 @@ class FraudScoringWorker:
         consumer_group: str = "fraudflux-scoring-worker",
         clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
         timer_ns: Optional[Callable[[], int]] = None,
+        monitor: OperationalMonitor | None = None,
     ) -> None:
         self.consumer = consumer
         self.history_provider = history_provider
@@ -64,6 +66,7 @@ class FraudScoringWorker:
         self.output_factory = output_factory or DecisionOutputFactory()
         self.consumer_group = consumer_group
         self.clock = clock
+        self.monitor = monitor or OperationalMonitor()
         pipeline_arguments = {}
         if timer_ns is not None:
             pipeline_arguments["timer_ns"] = timer_ns
@@ -74,6 +77,7 @@ class FraudScoringWorker:
             anomaly_model=anomaly_model,
             risk_combiner=risk_combiner,
             decision_engine=decision_engine,
+            monitor=self.monitor,
             **pipeline_arguments,
         )
         self.processor = DecisionProcessor(
@@ -82,6 +86,7 @@ class FraudScoringWorker:
             publisher=publisher,
             output_factory=self.output_factory,
             clock=clock,
+            monitor=self.monitor,
         )
 
     def process_message(
@@ -89,19 +94,31 @@ class FraudScoringWorker:
         message: ConsumedMessage,
     ) -> ProcessingOutcome:
         if message.error() is not None:
+            self.monitor.record_event_consumed(message.topic(), "error")
             raise KafkaConsumptionError(str(message.error()))
         try:
             event = validate_transaction_event(message.value())
         except TransactionValidationError as error:
-            return self._reject_invalid(message, error)
+            outcome = self._reject_invalid(message, error)
+            self.monitor.record_event_consumed(
+                message.topic(),
+                outcome.value,
+            )
+            return outcome
 
-        processed = self.processor.process(event)
+        try:
+            processed = self.processor.process(event)
+        except Exception:
+            self.monitor.record_event_consumed(message.topic(), "failed")
+            raise
         self._commit(message)
-        return (
+        outcome = (
             ProcessingOutcome.PROCESSED
             if processed.created
             else ProcessingOutcome.DUPLICATE
         )
+        self.monitor.record_event_consumed(message.topic(), outcome.value)
+        return outcome
 
     def run_once(self, timeout_seconds: float = 1.0) -> ProcessingOutcome:
         message = self.consumer.poll(timeout_seconds)
@@ -150,7 +167,13 @@ class FraudScoringWorker:
                 payload=dead_letter.model_dump(mode="json"),
             )
         ]
-        created = self.store.save_rejection_if_absent(record_id, outbox)
+        try:
+            created = self.store.save_rejection_if_absent(record_id, outbox)
+        except Exception:
+            self.monitor.record_database_error("save_rejection")
+            raise
+        if created:
+            self.monitor.record_dead_letter()
         self._publish_pending(record_id)
         self._commit(message)
         return (

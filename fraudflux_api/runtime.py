@@ -8,6 +8,7 @@ from fraudflux_anomaly import IsolationForestAnomalyModel
 from fraudflux_decision import InitialDecisionEngine
 from fraudflux_features import CustomerFeatureCalculator, PostgresHistoryProvider
 from fraudflux_kafka import KafkaProducerSettings
+from fraudflux_monitoring import OperationalMonitor
 from fraudflux_risk import InitialRiskScoreCombiner
 from fraudflux_rules import YamlRulesEngine
 from fraudflux_storage import (
@@ -52,6 +53,7 @@ def create_runtime_app():
     connection_factory = create_connection_factory(
         PostgresStorageSettings(dsn=dsn)
     )
+    monitor = OperationalMonitor()
     pipeline = SharedScoringPipeline(
         history_provider=PostgresHistoryProvider(connection_factory),
         feature_calculator=CustomerFeatureCalculator(),
@@ -59,6 +61,7 @@ def create_runtime_app():
         anomaly_model=IsolationForestAnomalyModel.from_path(model_path),
         risk_combiner=InitialRiskScoreCombiner(),
         decision_engine=InitialDecisionEngine(),
+        monitor=monitor,
     )
     processor = DecisionProcessor(
         pipeline=pipeline,
@@ -69,10 +72,12 @@ def create_runtime_app():
                 client_id="fraudflux-api-output",
             )
         ),
+        monitor=monitor,
     )
     return create_app(
         processor=processor,
         queries=PostgresQueryRepository(connection_factory),
         alerts=PostgresAlertRepository(connection_factory),
         cors_origins=cors_origins,
+        monitor=monitor,
     )

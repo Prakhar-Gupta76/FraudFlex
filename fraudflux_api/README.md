@@ -21,3 +21,8 @@ Optional environment variables:
 
 OpenAPI documentation is available at `http://127.0.0.1:8000/docs`.
 List limits are capped at 200 rows.
+
+Operational endpoints:
+
+- `GET /health` reports database and monitoring health.
+- `GET /metrics` exposes Prometheus-compatible process metrics.

@@ -172,6 +172,22 @@ class PostgresProcessingStoreTests(unittest.TestCase):
         self.assertIn("INSERT INTO outbox_events", sql)
         self.assertIn("INSERT INTO audit_history", sql)
         self.assertNotIn("INSERT INTO fraud_alerts", sql)
+        audit = next(
+            parameters
+            for query, parameters in cursor.executions
+            if "INSERT INTO audit_history" in query
+        )
+        details = json.loads(audit["details"])
+        self.assertEqual(details["event_id"], decision.input_event_id)
+        self.assertEqual(details["final_score"], 32)
+        self.assertEqual(details["ruleset_version"], "rules-v1")
+        self.assertEqual(details["model_version"], "model-v1")
+        self.assertEqual(
+            details["triggered_rules"][0]["reason"],
+            "Amount is unusual",
+        )
+        self.assertIn("event_time", details)
+        self.assertIn("processed_at", details)
         self.assertEqual(connection.entered, 1)
         self.assertEqual(connection.exited, 1)
 

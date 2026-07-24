@@ -230,6 +230,7 @@ class FastApiServiceTests(unittest.TestCase):
             ("GET", "/dashboard/summary"),
             ("GET", "/events/stream"),
             ("GET", "/health"),
+            ("GET", "/metrics"),
         ):
             self.assertIn(expected, routes)
 

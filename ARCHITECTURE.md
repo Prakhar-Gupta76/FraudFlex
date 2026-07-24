@@ -78,7 +78,7 @@ Rules Engine          Anomaly Model
 | Analyst dashboard | Implemented |
 | Analyst review workflow | Implemented |
 | Feedback and evaluation | Implemented |
-| Operational monitoring | Planned |
+| Operational monitoring and audit | Implemented |
 
 ## 4. Component Flow
 
@@ -850,6 +850,36 @@ Operational monitoring covers:
 
 Every decision retains the event ID, event and processing times, ruleset and
 model versions, triggered reasons, score, decision, and analyst changes.
+
+The implemented `fraudflux_monitoring` package provides a thread-safe metrics
+registry and an `OperationalMonitor` shared by the real API scoring runtime.
+It records low-cardinality counters, gauges, and bounded latency samples for:
+
+- Produced events by topic and consumed events by topic and outcome
+- Dead-letter events and Kafka publication failures
+- Consumer lag by consumer group, topic, and partition
+- Scoring and HTTP latency with p50 and p95 values
+- Database-operation and anomaly-model failures
+- Process uptime and produced/consumed throughput
+- Trigger frequency by versioned rule identifier
+
+`GET /metrics` exposes Prometheus-compatible text and `/health` reports the
+monitoring subsystem alongside PostgreSQL. The MVP does not require Prometheus
+or Grafana to run; they can scrape the endpoint in a later deployment.
+Customer, transaction, account, and device identifiers are deliberately
+excluded from metric labels to avoid sensitive data and unbounded cardinality.
+
+PostgreSQL remains the durable audit authority. Each `risk_decisions` row
+retains the validated input event and features, event and processing times,
+rule and anomaly evidence, model/ruleset/policy versions, score, category,
+action, explanation, and latency. Its append-only `decision.created` audit
+entry now repeats the key decision evidence for direct investigation.
+Assignments and analyst reviews continue to append their actor, status
+transition, notes, outcome, and review time without overwriting history.
+
+`DecisionAuditSnapshot` validates a stored decision and returns an immutable,
+self-contained audit view. Monitoring failures never change a risk decision,
+and monitoring does not trigger model training.
 
 ## 5. Complete Example
 

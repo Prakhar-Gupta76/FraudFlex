@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Callable
 
+from fraudflux_monitoring import OperationalMonitor
 from fraudflux_validation import TransactionEvent
 
 from .domain import (
@@ -60,6 +61,7 @@ class SharedScoringPipeline:
         risk_combiner: RiskCombiner,
         decision_engine: DecisionEngine,
         timer_ns: Callable[[], int] = time.perf_counter_ns,
+        monitor: OperationalMonitor | None = None,
     ) -> None:
         self.history_provider = history_provider
         self.feature_calculator = feature_calculator
@@ -68,13 +70,20 @@ class SharedScoringPipeline:
         self.risk_combiner = risk_combiner
         self.decision_engine = decision_engine
         self.timer_ns = timer_ns
+        self.monitor = monitor or OperationalMonitor()
 
     def score(self, event: TransactionEvent) -> ScoringResult:
         started = self.timer_ns()
         history = self.history_provider.load(event)
         features = self.feature_calculator.calculate(event, history)
         rules = self.rules_engine.evaluate(event, history, features)
-        anomaly = self.anomaly_model.evaluate(features)
+        try:
+            anomaly = self.anomaly_model.evaluate(features)
+        except Exception:
+            self.monitor.record_model_failure(
+                str(getattr(self.anomaly_model, "model_version", "unknown"))
+            )
+            raise
         combined_score = self.risk_combiner.combine(rules, anomaly)
         upstream_latency_ms = max(
             0.0,
@@ -87,6 +96,10 @@ class SharedScoringPipeline:
             upstream_processing_latency_ms=upstream_latency_ms,
         )
         validate_decision(combined_score, decision)
+        self.monitor.record_scoring(
+            decision.processing_latency_ms,
+            rule_ids=(hit.rule_id for hit in rules.hits),
+        )
         return ScoringResult(
             features=features,
             rules=rules,
@@ -107,16 +120,21 @@ class DecisionProcessor:
         publisher: OutputPublisher,
         output_factory: DecisionOutputFactory | None = None,
         clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
+        monitor: OperationalMonitor | None = None,
     ) -> None:
         self.pipeline = pipeline
         self.store = store
         self.publisher = publisher
         self.output_factory = output_factory or DecisionOutputFactory()
         self.clock = clock
+        self.monitor = monitor or pipeline.monitor
 
     def process(self, event: TransactionEvent) -> ProcessedDecision:
         record_id = f"event:{event.event_id}"
-        existing = self.store.get_decision(event.event_id)
+        existing = self._database_call(
+            "get_decision",
+            lambda: self.store.get_decision(event.event_id),
+        )
         created = False
         if existing is None:
             scored = self.pipeline.score(event)
@@ -146,11 +164,20 @@ class DecisionProcessor:
                 decision=scored.decision,
                 processed_at=processed_at.isoformat(),
             )
-            created = self.store.save_decision_if_absent(candidate, outputs)
+            created = self._database_call(
+                "save_decision",
+                lambda: self.store.save_decision_if_absent(
+                    candidate,
+                    outputs,
+                ),
+            )
             existing = (
                 candidate
                 if created
-                else self.store.get_decision(event.event_id)
+                else self._database_call(
+                    "get_decision_after_conflict",
+                    lambda: self.store.get_decision(event.event_id),
+                )
             )
             if existing is None:
                 raise RuntimeError(
@@ -161,9 +188,28 @@ class DecisionProcessor:
         return ProcessedDecision(stored=existing, created=created)
 
     def publish_pending(self, record_id: str) -> None:
-        for output in self.store.pending_outbox(record_id):
-            self.publisher.publish(output)
-            self.store.mark_outbox_published(output.outbox_id)
+        pending = self._database_call(
+            "pending_outbox",
+            lambda: self.store.pending_outbox(record_id),
+        )
+        for output in pending:
+            try:
+                self.publisher.publish(output)
+            except Exception:
+                self.monitor.record_publish_failure(output.topic)
+                raise
+            self.monitor.record_event_produced(output.topic)
+            self._database_call(
+                "mark_outbox_published",
+                lambda: self.store.mark_outbox_published(output.outbox_id),
+            )
+
+    def _database_call(self, operation: str, callback: Callable[[], object]):
+        try:
+            return callback()
+        except Exception:
+            self.monitor.record_database_error(operation)
+            raise
 
 
 def validate_decision(

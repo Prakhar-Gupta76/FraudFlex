@@ -17,6 +17,7 @@ from typing import (
     Tuple,
 )
 
+from fraudflux_monitoring import OperationalMonitor
 from fraudflux_validation import TransactionEvent, validate_transaction_event
 
 from .config import KafkaProducerSettings
@@ -122,20 +123,28 @@ class KafkaTransactionProducer:
         event_factory: Optional[TransactionEventFactory] = None,
         clock: Callable[[], float] = time.monotonic,
         sleep: Callable[[float], None] = time.sleep,
+        monitor: OperationalMonitor | None = None,
     ) -> None:
         self.client = client
         self.settings = settings or KafkaProducerSettings()
         self.event_factory = event_factory or TransactionEventFactory()
         self._clock = clock
         self._sleep = sleep
+        self.monitor = monitor or OperationalMonitor()
 
     @classmethod
     def from_settings(
         cls,
         settings: Optional[KafkaProducerSettings] = None,
+        *,
+        monitor: OperationalMonitor | None = None,
     ) -> "KafkaTransactionProducer":
         resolved = settings or KafkaProducerSettings()
-        return cls(create_confluent_producer(resolved), settings=resolved)
+        return cls(
+            create_confluent_producer(resolved),
+            settings=resolved,
+            monitor=monitor,
+        )
 
     def publish_transaction(
         self,
@@ -161,13 +170,18 @@ class KafkaTransactionProducer:
             ("schema-version", event.schema_version.encode("utf-8")),
         ]
 
-        message = self.publish_serialized(
-            event_id=event.event_id,
-            topic=self.settings.topic,
-            key=key,
-            value=serialized,
-            headers=headers,
-        )
+        try:
+            message = self.publish_serialized(
+                event_id=event.event_id,
+                topic=self.settings.topic,
+                key=key,
+                value=serialized,
+                headers=headers,
+            )
+        except Exception:
+            self.monitor.record_publish_failure(self.settings.topic)
+            raise
+        self.monitor.record_event_produced(self.settings.topic)
 
         return PublishReceipt(
             event_id=event.event_id,

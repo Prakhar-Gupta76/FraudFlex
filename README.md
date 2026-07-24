@@ -271,6 +271,20 @@ analyst labels take precedence over simulator labels, while
 units; one evaluation report should contain transactions in one currency.
 This workflow calculates metrics only and never triggers model retraining.
 
+## Operational Monitoring and Audit
+
+The final MVP component records event production and consumption, dead-letter
+volume, consumer lag, scoring/API latency, database and model failures,
+throughput, and rule-trigger frequency. The API exposes these process metrics
+at `GET /metrics` in Prometheus-compatible text and includes monitoring in
+`GET /health`.
+
+PostgreSQL is the durable audit authority. Decisions retain their original
+event, event and processing times, rule/model/policy versions, triggered
+reasons, score, action, and explanation. Assignments and analyst reviews are
+append-only, preserving the actor, notes, status transition, and review time.
+Operational metrics never include customer or transaction IDs as labels.
+
 ## Project Principles
 
 - Every risk decision must be explainable and auditable.

@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Any, Mapping, Optional, Protocol, Sequence
+import time
+from typing import Any, Callable, Mapping, Optional, Protocol, Sequence, TypeVar
 
 from fastapi import FastAPI, HTTPException, Query, Request, status
 from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import PlainTextResponse, StreamingResponse
 
+from fraudflux_monitoring import OperationalMonitor
 from fraudflux_storage import AnalystReviewRecord, ReviewOutcome
 from fraudflux_validation import TransactionEvent
 from fraudflux_worker import DecisionProcessor, ProcessedDecision
@@ -25,6 +27,8 @@ from .models import (
     TransactionDetail,
     TransactionSummary,
 )
+
+T = TypeVar("T")
 
 
 class QueryRepository(Protocol):
@@ -83,17 +87,20 @@ def create_app(
         "http://127.0.0.1:5173",
     ),
     live_interval_seconds: float = 2.0,
+    monitor: OperationalMonitor | None = None,
 ) -> FastAPI:
     if live_interval_seconds <= 0:
         raise ValueError("live_interval_seconds must be positive")
+    operational_monitor = monitor or OperationalMonitor()
     app = FastAPI(
         title="FraudFlux Risk API",
-        version="0.15.0",
+        version="0.17.0",
         description=(
             "Synchronous scoring and analyst-query API for simulated "
             "FraudFlux transactions."
         ),
     )
+    app.state.operational_monitor = operational_monitor
     app.add_middleware(
         CORSMiddleware,
         allow_origins=list(cors_origins),
@@ -101,6 +108,28 @@ def create_app(
         allow_methods=["GET", "POST"],
         allow_headers=["Content-Type"],
     )
+
+    @app.middleware("http")
+    async def monitor_http(request: Request, call_next):
+        started = time.perf_counter_ns()
+        status_code = 500
+        try:
+            response = await call_next(request)
+            status_code = response.status_code
+            return response
+        finally:
+            route = request.scope.get("route")
+            route_path = getattr(route, "path", "unmatched")
+            latency_ms = max(
+                0.0,
+                (time.perf_counter_ns() - started) / 1_000_000,
+            )
+            operational_monitor.record_api_request(
+                request.method,
+                route_path,
+                status_code,
+                latency_ms,
+            )
 
     @app.post(
         "/transactions/score",
@@ -130,12 +159,16 @@ def create_app(
         search: Optional[str] = Query(default=None, max_length=120),
         customer_id: Optional[str] = Query(default=None, max_length=64),
     ) -> Sequence[Mapping[str, Any]]:
-        return queries.list_transactions(
-            limit=limit,
-            offset=offset,
-            category=category,
-            search=search.strip() if search and search.strip() else None,
-            customer_id=customer_id,
+        return _query_call(
+            operational_monitor,
+            "list_transactions",
+            lambda: queries.list_transactions(
+                limit=limit,
+                offset=offset,
+                category=category,
+                search=search.strip() if search and search.strip() else None,
+                customer_id=customer_id,
+            ),
         )
 
     @app.get(
@@ -144,7 +177,11 @@ def create_app(
         tags=["transactions"],
     )
     def get_transaction(transaction_id: str) -> Mapping[str, Any]:
-        transaction = queries.get_transaction(transaction_id)
+        transaction = _query_call(
+            operational_monitor,
+            "get_transaction",
+            lambda: queries.get_transaction(transaction_id),
+        )
         if transaction is None:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -166,10 +203,14 @@ def create_app(
             pattern="^(open|assigned|resolved)$",
         ),
     ) -> Sequence[Mapping[str, Any]]:
-        return queries.list_alerts(
-            limit=limit,
-            offset=offset,
-            status=alert_status,
+        return _query_call(
+            operational_monitor,
+            "list_alerts",
+            lambda: queries.list_alerts(
+                limit=limit,
+                offset=offset,
+                status=alert_status,
+            ),
         )
 
     @app.get(
@@ -178,7 +219,11 @@ def create_app(
         tags=["alerts"],
     )
     def get_alert(alert_id: str) -> Mapping[str, Any]:
-        alert = queries.get_alert(alert_id)
+        alert = _query_call(
+            operational_monitor,
+            "get_alert",
+            lambda: queries.get_alert(alert_id),
+        )
         if alert is None:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -208,6 +253,12 @@ def create_app(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Alert not found",
             ) from exc
+        except Exception as exc:
+            operational_monitor.record_database_error("review_alert")
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Analyst review storage is temporarily unavailable",
+            ) from exc
         if review is None:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
@@ -228,7 +279,11 @@ def create_app(
         tags=["dashboard"],
     )
     def dashboard_summary() -> Mapping[str, Any]:
-        return queries.dashboard_summary()
+        return _query_call(
+            operational_monitor,
+            "dashboard_summary",
+            queries.dashboard_summary,
+        )
 
     @app.get("/events/stream", tags=["operations"])
     async def event_stream(request: Request) -> StreamingResponse:
@@ -243,6 +298,9 @@ def create_app(
                     ).model_dump_json()
                     yield f"event: dashboard\ndata: {payload}\n\n"
                 except Exception:
+                    operational_monitor.record_database_error(
+                        "dashboard_stream"
+                    )
                     yield (
                         "event: service.degraded\n"
                         'data: {"status":"degraded"}\n\n'
@@ -267,16 +325,45 @@ def create_app(
         try:
             database_healthy = queries.health()
         except Exception:
+            operational_monitor.record_database_error("health")
             database_healthy = False
         state = "healthy" if database_healthy else "unhealthy"
         return HealthResponse(
             status="healthy" if database_healthy else "degraded",
             service="fraudflux-api",
-            version="0.15.0",
-            checks={"database": state},
+            version="0.17.0",
+            checks={"database": state, "monitoring": "healthy"},
+        )
+
+    @app.get(
+        "/metrics",
+        response_class=PlainTextResponse,
+        tags=["operations"],
+    )
+    def metrics() -> PlainTextResponse:
+        return PlainTextResponse(
+            operational_monitor.prometheus_text(),
+            media_type="text/plain; version=0.0.4; charset=utf-8",
         )
 
     return app
+
+
+def _query_call(
+    monitor: OperationalMonitor,
+    operation: str,
+    callback: Callable[[], T],
+) -> T:
+    try:
+        return callback()
+    except HTTPException:
+        raise
+    except Exception as exc:
+        monitor.record_database_error(operation)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Database query is temporarily unavailable",
+        ) from exc
 
 
 def _score_response(processed: ProcessedDecision) -> ScoreResponse:
