@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Dict
 
 from fraudflux_events import (
@@ -14,8 +14,10 @@ from fraudflux_events import (
 from fraudflux_kafka import (
     KafkaClientUnavailableError,
     KafkaProducerSettings,
+    KafkaSecuritySettings,
     KafkaTransactionProducer,
 )
+from fraudflux_config import environment_value
 from fraudflux_kafka.producer import ProducerClient
 from fraudflux_validation import DeadLetterEvent
 
@@ -25,11 +27,24 @@ from .ports import Consumer
 
 @dataclass(frozen=True)
 class KafkaConsumerSettings:
-    bootstrap_servers: str = "localhost:9092"
-    group_id: str = "fraudflux-scoring-worker"
+    bootstrap_servers: str = field(
+        default_factory=lambda: environment_value(
+            "FRAUDFLUX_KAFKA_BOOTSTRAP_SERVERS",
+            "127.0.0.1:9092",
+        )
+    )
+    group_id: str = field(
+        default_factory=lambda: environment_value(
+            "FRAUDFLUX_KAFKA_CONSUMER_GROUP",
+            "fraudflux-scoring-worker",
+        )
+    )
     topic: str = "transactions.raw"
     auto_offset_reset: str = "earliest"
     poll_timeout_seconds: float = 1.0
+    security: KafkaSecuritySettings = field(
+        default_factory=KafkaSecuritySettings
+    )
 
     def __post_init__(self) -> None:
         if not self.bootstrap_servers.strip():
@@ -52,6 +67,7 @@ class KafkaConsumerSettings:
             "auto.offset.reset": self.auto_offset_reset,
             "isolation.level": "read_committed",
             "enable.partition.eof": False,
+            **self.security.confluent_config(),
         }
 
 
@@ -121,13 +137,13 @@ class KafkaOutputPublisher:
             separators=(",", ":"),
             sort_keys=True,
         ).encode("utf-8")
-        headers = (
+        headers = [
             ("content-type", b"application/json"),
             ("event-id", event_id.encode("utf-8")),
             ("event-type", event_type.encode("utf-8")),
             ("schema-version", schema_version.encode("utf-8")),
             ("outbox-id", message.outbox_id.encode("utf-8")),
-        )
+        ]
         delivered = self._reliable_producer.publish_serialized(
             event_id=event_id,
             topic=message.topic,

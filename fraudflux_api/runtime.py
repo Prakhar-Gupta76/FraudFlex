@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-import os
-
 from fraudflux_anomaly import IsolationForestAnomalyModel
+from fraudflux_config import environment_value, load_environment
 from fraudflux_decision import InitialDecisionEngine
 from fraudflux_features import CustomerFeatureCalculator, PostgresHistoryProvider
 from fraudflux_kafka import KafkaProducerSettings
@@ -29,22 +28,23 @@ from .application import create_app
 
 def create_runtime_app():
     """Build the real API from environment configuration."""
-    model_path = os.getenv("FRAUDFLUX_MODEL_ARTIFACT", "").strip()
+    load_environment()
+    model_path = environment_value("FRAUDFLUX_MODEL_ARTIFACT").strip()
     if not model_path:
         raise RuntimeError(
             "FRAUDFLUX_MODEL_ARTIFACT must point to a trained model artifact"
         )
-    dsn = os.getenv(
+    dsn = environment_value(
         "FRAUDFLUX_POSTGRES_DSN",
         PostgresStorageSettings().dsn,
     )
-    bootstrap_servers = os.getenv(
+    bootstrap_servers = environment_value(
         "FRAUDFLUX_KAFKA_BOOTSTRAP_SERVERS",
-        "localhost:9092",
+        "127.0.0.1:9092",
     )
     cors_origins = tuple(
         origin.strip()
-        for origin in os.getenv(
+        for origin in environment_value(
             "FRAUDFLUX_CORS_ORIGINS",
             "http://localhost:5173,http://127.0.0.1:5173",
         ).split(",")

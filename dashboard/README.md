@@ -9,15 +9,14 @@ Start the backend first, then:
 ```powershell
 cd dashboard
 npm install
-Copy-Item .env.example .env
 npm run dev
 ```
 
 Open `http://localhost:5173`.
 
-`VITE_API_URL` selects the FastAPI base URL. If the dashboard is hosted on
-another origin, also add that origin to the backend's comma-separated
-`FRAUDFLUX_CORS_ORIGINS` setting.
+The dashboard reads `VITE_API_URL` from the repository-level `.env`. If it is
+hosted on another origin, also update the comma-separated
+`FRAUDFLUX_CORS_ORIGINS` value in that file.
 
 ## Validation
 

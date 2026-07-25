@@ -7,6 +7,9 @@ import json
 from dataclasses import asdict, dataclass
 from typing import Any, Dict, Mapping, Optional, Protocol, Sequence, Tuple
 
+from fraudflux_config import environment_value, load_environment
+
+from .config import KafkaSecuritySettings
 from .producer import KafkaClientUnavailableError
 from .topics import REQUIRED_TOPIC_NAMES
 
@@ -52,7 +55,10 @@ def inspect_broker(
     )
 
 
-def create_confluent_admin(bootstrap_servers: str) -> AdminClient:
+def create_confluent_admin(
+    bootstrap_servers: str,
+    security: KafkaSecuritySettings | None = None,
+) -> AdminClient:
     try:
         from confluent_kafka.admin import AdminClient as ConfluentAdminClient
     except ImportError as exc:
@@ -64,7 +70,13 @@ def create_confluent_admin(bootstrap_servers: str) -> AdminClient:
             fatal=True,
             cause=exc,
         ) from exc
-    return ConfluentAdminClient({"bootstrap.servers": bootstrap_servers})
+    resolved_security = security or KafkaSecuritySettings()
+    return ConfluentAdminClient(
+        {
+            "bootstrap.servers": bootstrap_servers,
+            **resolved_security.confluent_config(),
+        }
+    )
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -73,13 +85,17 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--bootstrap-servers",
-        default="localhost:9092",
+        default=environment_value(
+            "FRAUDFLUX_KAFKA_BOOTSTRAP_SERVERS",
+            "127.0.0.1:9092",
+        ),
     )
     parser.add_argument("--timeout", type=float, default=5.0)
     return parser
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
+    load_environment()
     args = build_parser().parse_args(argv)
     try:
         status = inspect_broker(
@@ -101,4 +117,3 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     print(json.dumps(status.as_dict(), separators=(",", ":")))
     return 0 if status.ready else 1
-

@@ -49,6 +49,70 @@ The first MVP will contain:
 Apache Flink, Feast, Redis, and advanced infrastructure monitoring are planned
 as later upgrades and are not required for the first working version.
 
+## Local Configuration
+
+FraudFlux uses one repository-level `.env` file for Python services, command
+line tools, Docker Compose, and the React dashboard. Create it once:
+
+```powershell
+Copy-Item .env.example .env
+```
+
+The checked-in example contains safe local-development defaults. Local Kafka
+uses `PLAINTEXT` and requires no username, password, or API key. PostgreSQL uses
+the local Docker credentials defined in the same file. The only value that
+must point to a generated file before starting the API is:
+
+```env
+FRAUDFLUX_MODEL_ARTIFACT=models/isolation-forest-v1.joblib
+```
+
+Existing process environment variables take precedence over `.env`. An
+alternative file can be selected with `FRAUDFLUX_ENV_FILE`. `.env` is ignored
+by Git; `.env.example` is the safe template that should be committed.
+
+For a managed Kafka service, replace the broker and security values supplied
+by that provider:
+
+```env
+FRAUDFLUX_KAFKA_BOOTSTRAP_SERVERS=provider-host:9092
+FRAUDFLUX_KAFKA_SECURITY_PROTOCOL=SASL_SSL
+FRAUDFLUX_KAFKA_SASL_MECHANISM=PLAIN
+FRAUDFLUX_KAFKA_USERNAME=provider-api-key
+FRAUDFLUX_KAFKA_PASSWORD=provider-api-secret
+```
+
+Incomplete SASL configuration is rejected before a Kafka client starts.
+
+## Local Startup
+
+Install the Python project and start the local infrastructure:
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -e .
+docker compose up -d
+fraudflux-kafka-check
+```
+
+After training the model artifact configured in `.env`, start the API without
+setting terminal environment variables:
+
+```powershell
+uvicorn fraudflux_api.runtime:create_runtime_app --factory --reload
+```
+
+Start the dashboard in a second terminal:
+
+```powershell
+cd dashboard
+npm install
+npm run dev
+```
+
+The dashboard reads the repository-level `.env` through Vite.
+
 ## Transaction Information Used
 
 Each simulated transaction may include:

@@ -15,7 +15,11 @@ from fraudflux_storage import (
     PostgresVersionRepository,
     ReviewOutcome,
 )
-from fraudflux_storage.postgres import _decision_parameters
+from fraudflux_storage.postgres import (
+    _LIST_ALERTS,
+    _LIST_TRANSACTIONS,
+    _decision_parameters,
+)
 from fraudflux_worker import (
     AnomalyEvaluation,
     CombinedRiskScore,
@@ -562,6 +566,13 @@ class PostgresOperationalRepositoryTests(unittest.TestCase):
         self.assertEqual(list_parameters["category"], "high")
         self.assertEqual(list_parameters["limit"], 25)
         self.assertIsNone(list_parameters["search"])
+        self.assertIn("CAST(%(category)s AS VARCHAR)", _LIST_TRANSACTIONS)
+        self.assertIn(
+            "CAST(%(customer_id)s AS VARCHAR)",
+            _LIST_TRANSACTIONS,
+        )
+        self.assertIn("CAST(%(search)s AS VARCHAR)", _LIST_TRANSACTIONS)
+        self.assertIn("CAST(%(status)s AS VARCHAR)", _LIST_ALERTS)
 
 
 class PostgresMigrationTests(unittest.TestCase):

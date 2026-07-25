@@ -6,11 +6,11 @@ services:
     container_name: fraudflux-postgres
     restart: unless-stopped
     ports:
-      - "127.0.0.1:5432:5432"
+      - "127.0.0.1:${FRAUDFLUX_POSTGRES_PORT:-5432}:5432"
     environment:
-      POSTGRES_DB: "fraudflux"
-      POSTGRES_USER: "fraudflux"
-      POSTGRES_PASSWORD: "fraudflux"
+      POSTGRES_DB: "${FRAUDFLUX_POSTGRES_DB:-fraudflux}"
+      POSTGRES_USER: "${FRAUDFLUX_POSTGRES_USER:-fraudflux}"
+      POSTGRES_PASSWORD: "${FRAUDFLUX_POSTGRES_PASSWORD:-fraudflux}"
     volumes:
       - postgres-data:/var/lib/postgresql/data
       - ./infra/postgres/001_feature_history.sql:/docker-entrypoint-initdb.d/001_feature_history.sql:ro
@@ -19,7 +19,7 @@ services:
     healthcheck:
       test:
         - CMD-SHELL
-        - pg_isready -U fraudflux -d fraudflux
+        - pg_isready -U ${FRAUDFLUX_POSTGRES_USER:-fraudflux} -d ${FRAUDFLUX_POSTGRES_DB:-fraudflux}
       interval: 5s
       timeout: 5s
       retries: 12
@@ -32,7 +32,7 @@ services:
     hostname: kafka
     restart: unless-stopped
     ports:
-      - "127.0.0.1:9092:9092"
+      - "127.0.0.1:${FRAUDFLUX_KAFKA_PORT:-9092}:9092"
     environment:
       CLUSTER_ID: "4L6g3nShT-eMCtK--X86sw"
       KAFKA_NODE_ID: "1"
@@ -42,7 +42,7 @@ services:
       KAFKA_INTER_BROKER_LISTENER_NAME: "PLAINTEXT"
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT"
       KAFKA_LISTENERS: "CONTROLLER://:29093,PLAINTEXT://:19092,PLAINTEXT_HOST://:9092"
-      KAFKA_ADVERTISED_LISTENERS: "PLAINTEXT://kafka:19092,PLAINTEXT_HOST://localhost:9092"
+      KAFKA_ADVERTISED_LISTENERS: "PLAINTEXT://kafka:19092,PLAINTEXT_HOST://127.0.0.1:${FRAUDFLUX_KAFKA_PORT:-9092}"
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
       KAFKA_NUM_PARTITIONS: "3"
       KAFKA_OFFSETS_TOPIC_NUM_PARTITIONS: "3"
@@ -56,10 +56,10 @@ services:
       KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: "0"
       KAFKA_LOG_RETENTION_HOURS: "24"
       KAFKA_LOG_SEGMENT_BYTES: "67108864"
-      KAFKA_LOG_DIRS: "/tmp/kraft-combined-logs"
+      KAFKA_LOG_DIRS: "/var/lib/kafka/data"
       KAFKA_HEAP_OPTS: "-Xms256m -Xmx512m"
     volumes:
-      - kafka-data:/tmp/kraft-combined-logs
+      - kafka-data:/var/lib/kafka/data
     healthcheck:
       test:
         - CMD-SHELL

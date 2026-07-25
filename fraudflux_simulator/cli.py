@@ -10,6 +10,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional, Sequence, TextIO
 
+from fraudflux_config import load_environment
+
 from .generator import SCENARIOS, TransactionSimulator
 
 
@@ -79,6 +81,7 @@ def run(args: argparse.Namespace, stream: TextIO) -> int:
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
+    load_environment()
     parser = build_parser()
     args = parser.parse_args(argv)
     if args.count < 1:
@@ -94,4 +97,3 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     args.output.parent.mkdir(parents=True, exist_ok=True)
     with args.output.open("w", encoding="utf-8", newline="\n") as stream:
         return run(args, stream)
-

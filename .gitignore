@@ -16,6 +16,9 @@ node_modules/
 *.tsbuildinfo
 
 simulator-output/
+data/
+models/
 
 # Local environment overrides
 .env
+!.env.example

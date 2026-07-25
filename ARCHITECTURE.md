@@ -82,6 +82,12 @@ Rules Engine          Anomaly Model
 
 ## 4. Component Flow
 
+Runtime configuration is loaded from the repository-level `.env` by the
+shared `fraudflux_config` package. The same file supplies Docker Compose,
+Python API/CLI processes, Kafka producer and consumer settings, PostgreSQL,
+and the dashboard. Existing process variables take precedence, secrets are
+not committed, and incomplete Kafka SASL credentials fail validation.
+
 ### 4.1 Transaction Simulator
 
 The simulator behaves like a payment application producing transactions. It

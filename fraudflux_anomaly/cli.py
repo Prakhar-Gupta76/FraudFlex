@@ -7,6 +7,8 @@ import json
 from pathlib import Path
 from typing import Any, Mapping, Optional, Sequence
 
+from fraudflux_config import load_environment
+
 from .artifact import save_artifact
 from .training import IsolationForestTrainer, TrainerConfig
 
@@ -24,6 +26,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
+    load_environment()
     args = build_parser().parse_args(argv)
     records = _read_json_lines(args.input)
     trainer = IsolationForestTrainer(

@@ -7,6 +7,8 @@ import json
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
+from fraudflux_config import load_environment
+
 from .evaluator import FraudDecisionEvaluator
 from .loaders import (
     build_analyst_cases,
@@ -45,6 +47,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    load_environment()
     arguments = build_parser().parse_args(argv)
     if not arguments.ground_truth and not arguments.analyst_labels:
         raise SystemExit(

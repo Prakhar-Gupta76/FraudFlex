@@ -233,6 +233,7 @@ class KafkaOutputPublisherTests(unittest.TestCase):
             ["transactions.scored", "fraud.alerts"],
         )
         for record, output in zip(client.records, outputs):
+            self.assertIsInstance(record["headers"], list)
             self.assertEqual(
                 record["key"],
                 output.key.encode("utf-8"),

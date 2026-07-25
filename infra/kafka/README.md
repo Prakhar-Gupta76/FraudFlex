@@ -25,6 +25,11 @@ docker compose up -d
 The `kafka-init` container waits for the broker health check and then creates
 all four topics. It exits successfully after initialization.
 
+Kafka data is persisted at `/var/lib/kafka/data`, the writable directory
+owned by the official image's non-root `appuser`. Mounting the named volume at
+a root-owned directory prevents KRaft from writing its bootstrap metadata on
+some Docker Desktop installations.
+
 Inspect status and initialization logs:
 
 ```powershell

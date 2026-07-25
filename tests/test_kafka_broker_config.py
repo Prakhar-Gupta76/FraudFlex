@@ -79,8 +79,15 @@ class DockerConfigurationTests(unittest.TestCase):
         self.assertIn('KAFKA_PROCESS_ROLES: "broker,controller"', compose)
         self.assertIn("KAFKA_CONTROLLER_QUORUM_VOTERS", compose)
         self.assertIn('KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"', compose)
-        self.assertIn("127.0.0.1:9092:9092", compose)
+        self.assertIn(
+            "127.0.0.1:${FRAUDFLUX_KAFKA_PORT:-9092}:9092",
+            compose,
+        )
         self.assertIn('KAFKA_HEAP_OPTS: "-Xms256m -Xmx512m"', compose)
+        self.assertIn(
+            "kafka-data:/var/lib/kafka/data",
+            compose,
+        )
         self.assertIn('KAFKA_OFFSETS_TOPIC_NUM_PARTITIONS: "3"', compose)
         self.assertIn(
             'KAFKA_TRANSACTION_STATE_LOG_NUM_PARTITIONS: "3"',

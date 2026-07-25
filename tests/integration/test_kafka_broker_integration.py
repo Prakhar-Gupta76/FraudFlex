@@ -27,7 +27,7 @@ RUN_LIVE_TESTS = (
 class KafkaBrokerIntegrationTests(unittest.TestCase):
     bootstrap_servers = os.getenv(
         "FRAUDFLUX_KAFKA_BOOTSTRAP_SERVERS",
-        "localhost:9092",
+        "127.0.0.1:9092",
     )
 
     @classmethod
@@ -122,4 +122,3 @@ class KafkaBrokerIntegrationTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

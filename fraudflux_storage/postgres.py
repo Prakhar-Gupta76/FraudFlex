@@ -8,6 +8,7 @@ from enum import Enum
 from typing import Any, Callable, Mapping, Optional, Protocol, Sequence
 
 from fraudflux_validation import validate_transaction_event
+from fraudflux_config import environment_value
 from fraudflux_worker import (
     AnomalyEvaluation,
     CombinedRiskScore,
@@ -37,8 +38,11 @@ class Connection(Protocol):
 
 @dataclass(frozen=True)
 class PostgresStorageSettings:
-    dsn: str = (
-        "postgresql://fraudflux:fraudflux@localhost:5432/fraudflux"
+    dsn: str = field(
+        default_factory=lambda: environment_value(
+            "FRAUDFLUX_POSTGRES_DSN",
+            "postgresql://fraudflux:fraudflux@127.0.0.1:5432/fraudflux",
+        )
     )
 
     def __post_init__(self) -> None:
@@ -1060,10 +1064,16 @@ SELECT th.transaction_id, th.customer_id, th.amount_minor, th.currency,
        rd.recommended_action, rd.processed_at
 FROM transaction_history AS th
 JOIN risk_decisions AS rd ON rd.transaction_id = th.transaction_id
-WHERE (%(category)s IS NULL OR rd.effective_category = %(category)s)
-  AND (%(customer_id)s IS NULL OR th.customer_id = %(customer_id)s)
+WHERE (
+    CAST(%(category)s AS VARCHAR) IS NULL
+    OR rd.effective_category = %(category)s
+)
   AND (
-      %(search)s IS NULL
+      CAST(%(customer_id)s AS VARCHAR) IS NULL
+      OR th.customer_id = %(customer_id)s
+  )
+  AND (
+      CAST(%(search)s AS VARCHAR) IS NULL
       OR th.transaction_id ILIKE '%%' || %(search)s || '%%'
       OR th.customer_id ILIKE '%%' || %(search)s || '%%'
       OR th.merchant_id ILIKE '%%' || %(search)s || '%%'
@@ -1095,7 +1105,10 @@ SELECT fa.alert_id, fa.transaction_id, fa.customer_id, fa.status,
        rd.recommended_action
 FROM fraud_alerts AS fa
 JOIN risk_decisions AS rd ON rd.record_id = fa.decision_record_id
-WHERE (%(status)s IS NULL OR fa.status = %(status)s)
+WHERE (
+    CAST(%(status)s AS VARCHAR) IS NULL
+    OR fa.status = %(status)s
+)
 ORDER BY fa.created_at DESC, fa.alert_id
 LIMIT %(limit)s OFFSET %(offset)s
 """

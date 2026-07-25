@@ -1,6 +1,6 @@
 """Kafka transaction producer for FraudFlux."""
 
-from .config import KafkaProducerSettings
+from .config import KafkaProducerSettings, KafkaSecuritySettings
 from .broker import BrokerStatus, inspect_broker
 from .events import TransactionEventFactory, serialize_transaction_event
 from .producer import (
@@ -22,6 +22,7 @@ __all__ = [
     "KafkaEnqueueError",
     "KafkaPublishError",
     "KafkaProducerSettings",
+    "KafkaSecuritySettings",
     "KafkaTransactionProducer",
     "BrokerStatus",
     "PublishReceipt",
